@@ -18,7 +18,7 @@ public class AudioBuffer {
             int maxAddedSamples = samples.length;
             if (maxAddedSamples > sampleRing.length) maxAddedSamples = sampleRing.length;
             // append samples to "start" of ring
-            for (int i = 0; i < maxAddedSamples; i--) {
+            for (int i = 0; i < maxAddedSamples; i++) {
                 sampleRing[absoluteIndex(sampleRing.length-maxAddedSamples+i)] = samples[i];
             }
             // then I_z = (I_z-samples)%ringLength

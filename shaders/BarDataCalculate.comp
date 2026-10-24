@@ -30,7 +30,11 @@ uniform uint barCount;
 
 // SSBOs
 layout(std430, binding = 0) buffer channelFrequencyData { float amplitude[]; };
-layout(std430, binding = 1) buffer barData { vec4 barData[]; };
+layout(std430, binding = 1) buffer outBars { vec4 barData[]; };
+
+// constants
+const float PI  = 3.14159265358979;
+const float TAU = 6.28318530717959; // 2π
 
 // interpolation functions
 float cubicSpline(float v0, float v1, float v2, float v3, float t){
@@ -111,7 +115,7 @@ ivec4 getSoroundingSampleFrequencies(float i){
     // determine sample indecies
     ivec4 outVec = ivec4(floor(i - 1), floor(i), ceil(i), ceil(i + 1));
     // clamp to list boundries
-    return clamp(outVec,0,frequencySampleCount-1);
+    return ivec4(clamp(outVec,0,frequencySampleCount-1));
 }
 float getTforIndex(float i){
     if (mod(i,1.0) == 0) return 0.5;
@@ -226,37 +230,12 @@ void main() {
     float sampleI = fromBarItoSampleI(barIndex);
     float t = getTforIndex(sampleI);
     ivec4 soroundingFrequencies = getSoroundingSampleFrequencies(sampleI);
-    // determine bar height
-    // get sorrounding frequency amplitudes
-    float v0 = 0;
-    float v1 = 0;
-    float v2 = 0;
-    float v3 = 0;
-    for (uint c = 0; c < channelCount; c++){
-        // TODO: this does NOT track per-channel frequency biasis
-        uint channelIndex = c*frequencySampleCount;
-        v0 += amplitude[channelIndex + soroundingFrequencies.x];
-        v1 += amplitude[channelIndex + soroundingFrequencies.y];
-        v2 += amplitude[channelIndex + soroundingFrequencies.z];
-        v3 += amplitude[channelIndex + soroundingFrequencies.w];
-    }
+    // per channel
+    // interpolate frequency amplitude for this
     // interpolate height
     float barHeight;
-    if (barInterpolationMethod == 1){
-        // linear
-    } else if (barInterpolationMethod == 2){
-        // catmull room
-    } else if (barInterpolationMethod == 3){
-        // monotone cubic
-    } else if (barInterpolationMethod == 4){
-        // cosine
-    } else if (barInterpolationMethod == 5){
-        // nearest neighbor
-    } else {
-        // cubic spline
-    }
     // determine raw bar color
-
+    vec3 rawBarColor; // TODO
     // interpolate color based on bar height and convert to sRGB
     vec3 barColor;
     if (colorSpace == 1){
@@ -276,6 +255,6 @@ void main() {
         barColor = sRGBVolumeInterp(rawBarColor, barHeight);
     }
     // construct output data, and save to SSBO
-    vec4 outBar = vec4(barColor.x(),barColor.y(),barColor.z(), barHeight);
+    vec4 outBar = vec4(barColor.x,barColor.y,barColor.z, barHeight);
     barData[barIndex] = outBar;
 }

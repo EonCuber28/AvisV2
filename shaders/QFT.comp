@@ -1,5 +1,8 @@
 #version 430
 
+// DONE
+// UNTESTED
+
 // This compute shader takes in each channel frequency data
 // and computes the designated frequency data for that channel using the Constant-Q FT
 
