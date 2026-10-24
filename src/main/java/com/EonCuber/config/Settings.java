@@ -15,7 +15,8 @@ public final class Settings {
     private static volatile boolean isHardwareAccelerated = true;
     private static volatile boolean isHumanBiasActive = true;
     private static volatile int frequencySampleCount = 640;
-    private static volatile double humanBiasLevel = 502;
+    private static volatile double frequencyBiasLevel = 502;
+    private static volatile float[] frequencyBiasData = {1,1,0.5f,0.2f};
     private static volatile int targetUpdateRate = 30;
     private static volatile int displayBarCount = 1280;
 
@@ -72,8 +73,11 @@ public final class Settings {
     public static boolean getHumanBiasActive(){
         return isHumanBiasActive;
     }
-    public static double getHumanBiasLevel(){
-        return humanBiasLevel;
+    public static double getFrequencyBiasLevel(){
+        return frequencyBiasLevel;
+    }
+    public static float[] getFrequencyBiasData(){
+        return frequencyBiasData;
     }
     public static int getTargetUpdateRate(){
         return targetUpdateRate;
@@ -130,8 +134,12 @@ public final class Settings {
         frequencySampleCount = newVal;
         syncSettings();
     }
-    public static void setHumanBiasLevel(double newVal){
-        humanBiasLevel = newVal;
+    public static void setFrequencyBiasLevel(double newVal){
+        frequencyBiasLevel = newVal;
+        syncSettings();
+    }
+    public static void setFrequencyBiasData(float[] newVal){
+        frequencyBiasData = newVal;
         syncSettings();
     }
     public static void setTargetUpdateRate(int newVal){

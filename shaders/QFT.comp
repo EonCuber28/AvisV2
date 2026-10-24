@@ -1,0 +1,98 @@
+#version 430
+
+// This compute shader takes in each channel frequency data
+// and computes the designated frequency data for that channel using the Constant-Q FT
+
+// ins:                   | data type
+//- - - - - - - - - - - - + - - - - - - -
+// channel count          | int
+// frequency bias data    | sampler1D
+// bias influence         | float
+// sampled frequencies    | float SSBO
+// frequency cylces       |
+//   per frequency sample | float
+// use FT imaginary vect  | bool
+// audio sample rate      | int
+// audio samples          | sampler1D
+// audio sample length    | int
+
+// outs:                      | data type:
+//- - - - - - - - - - - - - - + - - - - - -
+// frequency data per channel | float SSBO
+
+// thread dispatch stuffs
+layout(local_size_x = 64) in; // work group size of 64
+
+// in
+layout(binding = 0) uniform sampler1D frequencyBiases;
+uniform float biasInfluence;
+uniform float frequencyCyclesPerSample;
+uniform bool useFTiVect;
+uniform int audioSampleRate;
+layout(binding = 1) uniform sampler2D audioSamples;
+uniform int channelCount;
+
+// SSBO setup
+layout(std430, binding = 0) readonly buffer targetFrequencies { float signal[]; }; // input from program (along with all the other args)
+layout(std430, binding = 1) buffer channelFrequencyData { float amplitude[]; };
+// constants
+const float PI  = 3.14159265358979;
+const float TAU = 6.28318530717959; // 2π
+const float RANGE_DB = 60.0;
+
+// helper functions
+int audioSampleCount() {
+    return textureSize(audioSamples, 0).x;
+}   // x = samples, y = channels
+uint neededSamplesForFrequency(float frequency){
+    return uint(ceil(frequencyCyclesPerSample*(float(audioSampleRate)/frequency)));
+}
+float getAudioSample(uint channel, uint index){
+    index = min(index, uint(audioSampleCount() - 1));
+    return texelFetch(audioSamples, ivec2(index, channel), 0).r;
+}
+uint dataOutIndex(uint channel, uint frequencyIndex){
+    return channel*uint(signal.length()) + frequencyIndex;
+}
+
+// main code
+void main(){
+    uint i = gl_GlobalInvocationID.x;
+    uint c = gl_GlobalInvocationID.y;
+    // exit early for threads outside of the target frequecy/channel buffer
+    if (i >= uint(signal.length())) return;
+    if (c >= uint(channelCount)) return;
+    // retreive relevant data
+    float frequency = signal[i];
+    uint sampleSampleSize = neededSamplesForFrequency(frequency);
+    // process Constant-Q FTs on designated frequency
+    float frequencyAmplitude;
+    if (useFTiVect) {
+        float realSum = 0;
+        float imagSum = 0;
+        for (int sI = 0; sI < sampleSampleSize; sI++) {
+            float signalAmp = getAudioSample(c,sI);
+            float exponent = (TAU * frequency * float(sI)) / float(audioSampleRate);
+            realSum += signalAmp*cos(exponent);
+            imagSum += -(signalAmp*sin(exponent));
+        }
+        frequencyAmplitude = (2.0 * sqrt(realSum*realSum + imagSum*imagSum)) / float(sampleSampleSize);
+    } else {
+        float realSum = 0;
+        for (int sI = 0; sI < sampleSampleSize; sI++) {
+            realSum += getAudioSample(c,sI)*cos((TAU * frequency * float(sI)) / float(audioSampleRate));
+        }
+        frequencyAmplitude = abs((2.0 * realSum) / float(sampleSampleSize));
+    }
+    // apply frequency biases to designated frequency
+    if (biasInfluence != 0) {
+        // simple lerp stuffs
+        float bias = texelFetch(frequencyBiases, int(i), 0).r;
+        frequencyAmplitude =
+            frequencyAmplitude*(1-biasInfluence)
+            +(frequencyAmplitude*bias)*biasInfluence;
+    }
+    // normalize to db and save
+    float db = 20.0 * log(max(frequencyAmplitude, 1e-9)) / log(10.0); // normalization math made by claude sonnet 5.5
+    amplitude[dataOutIndex(c,i)] = clamp(1.0 + db / RANGE_DB, 0.0, 1.0);
+}

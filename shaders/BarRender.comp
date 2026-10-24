@@ -1,0 +1,58 @@
+#version 430
+
+// ins:                   | data type
+//- - - - - - - - - - - - + - - - - - - -
+// render X               | int
+// redner y               | int
+// BG color               | vec3
+// gay mode               | bool
+
+// primary intermidiates: | data type:
+//- - - - - - - - - - - - + - - - - - - - - -
+// Ping buffer            | RGB SSBO uffer
+// Pong buffer            | RGB SSBO buffer
+// Bar mask               | boolean SSBO buffer
+// Alpha decay            |
+//   precistance texture  | float SSBO buffer
+
+// outs:           | data type:
+// - - - - - - - - + - - - - - -
+// rendered output | image2D
+
+// thread dispatch stuffs
+layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x16)
+// defines work group size
+// ie: how many threads get dispatched per compute dispatch operation (X*Y*Z groups)
+
+// in
+uniform int renderX;
+uniform int renderY;
+
+uniform int barCount;
+
+uniform int interpolationMethod;
+
+uniform vec3 BGcolor;
+uniform vec4 midColor;
+uniform vec4 channelColor[6];
+uniform int channelCount;
+uniform int colorSpace;
+
+uniform bool gayMode;
+
+// Texture setups
+
+
+// main code
+void main(){
+    // calculate bar heights
+    // calculate bar colors
+    // Fill ping with BG color
+    // draw rects
+    // draw to ping buffer
+    // draw in alpha-decay texture
+    // draw in bar mask
+    // Smear un-masked pixels upward from ping to pong
+    // apply aplha decay to un-masked pixels from pong to ping
+    // have ping buffer be displayed
+}
