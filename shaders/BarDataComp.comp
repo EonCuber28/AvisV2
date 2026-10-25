@@ -1,0 +1,157 @@
+#version 430
+
+// ins:                   | data type
+//- - - - - - - - - - - - + - - - - - - -
+// channel count          | int
+// mid color              | vec4
+// color space            | int (0,default=sRGB,1=HSV,2=OkLAB,3=CIELAB)
+// bar count              | int (same amount of threads that are dispatched)
+
+// outs:         | data type:
+// - - - - - - - + - - - - - -
+// bar data:     | vec4 SSBO
+//  - RGB Color  | vec3  (x,y,z of the vec4)
+//  - Height     | float (w of the vec4)
+
+// thread setup stuffs
+layout(local_size_x = 64) in; // work group size of 64
+
+// in data stuffs
+uniform uint channelCount;
+uniform int colorSpace;
+uniform vec3 midColor;
+uniform uint barCount;
+
+// SSBOs
+layout(std430, binding = 0) readonly buffer perChannelBarHeight { float barAmplitude[]; };
+layout(std430, binding = 1) buffer outBars { vec4 barData[]; };
+layout(std430, binding = 2) readonly buffer channelColors { vec3 channelColor[]; };
+
+// constants
+const float PI  = 3.14159265358979;
+const float TAU = 6.28318530717959; // 2π
+
+// color conversion helper
+vec3 linearToSRGB(vec3 c){
+    c = clamp(c, 0.0, 1.0);
+    bvec3 useLinear = lessThanEqual(c, vec3(0.0031308));
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return mix(hi, lo, useLinear);
+}
+// color conversion stuffs
+vec3 OkLABtosRGB(vec3 color){
+    // OkLab -> nonlinear LMS (column-major)
+    const mat3 labToLms = mat3(
+            1.0,           1.0,           1.0,
+            0.3963377774, -0.1055613458, -0.0894841775,
+            0.2158037573, -0.0638541728, -1.2914855480
+    );
+    // LMS -> linear sRGB (column-major)
+    const mat3 lmsToRgb = mat3(
+            4.0767416621, -1.2684380046, -0.0041960863,
+            -3.3077115913,  2.6097574011, -0.7034186147,
+            0.2309699292, -0.3413193965,  1.7076147010
+    );
+
+    vec3 lms = labToLms * color;
+    lms = lms * lms * lms;
+    return linearToSRGB(lmsToRgb * lms);
+}
+vec3 HSVtosRGB(vec3 color){
+    const vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(color.xxx + K.xyz) * 6.0 - K.www);
+    return color.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), color.y);
+}
+vec3 CIELABtosRGB(vec3 color){
+    const float delta = 6.0 / 29.0;
+    const vec3  whiteD65 = vec3(0.95047, 1.0, 1.08883);
+
+    float fy = (color.x + 16.0) / 116.0;
+    vec3 f = vec3(fy + color.y / 500.0, fy, fy - color.z / 200.0);
+
+    // Inverse of the CIELAB companding function
+    bvec3 isCube = greaterThan(f, vec3(delta));
+    vec3 cubed  = f * f * f;
+    vec3 linear = 3.0 * delta * delta * (f - 4.0 / 29.0);
+    vec3 xyz = whiteD65 * mix(linear, cubed, isCube);
+
+    // XYZ (D65) -> linear sRGB (column-major)
+    const mat3 xyzToRgb = mat3(
+            3.2404542, -0.9692660,  0.0556434,
+            -1.5371385,  1.8760108, -0.2040259,
+            -0.4985314,  0.0415560,  1.0572252
+    );
+    return linearToSRGB(xyzToRgb * xyz);
+}
+
+vec3 volumeInterpCIELAB(vec3 CIEALB, float volume){
+    return vec3(CIEALB.x*volume,CIEALB.y,CIEALB.z);
+}
+vec3 volumeInterpOkLAB(vec3 OkLAB, float volume){
+    return vec3(OkLAB.x*volume,OkLAB.y,OkLAB.z);
+}
+vec3 volumeInterpsRGB(vec3 sRGB, float volume){
+    return sRGB*volume;
+}
+vec3 volumeInterpHSV(vec3 HSV, float volume){
+    return vec3(HSV.x,HSV.y,HSV.z*volume);
+}
+
+float getBar(uint barIdx, int channel){
+    // prevent OOM reads
+    barIdx = int(mod(barIdx, barCount));
+    channel = int(mod(channel, channelCount));
+    // read from SSBO
+    return barAmplitude[(channel*barCount)+barIdx];
+}
+
+// per-bar code
+void main() {
+    uint barIndex = gl_GlobalInvocationID.x;
+    if (barIndex >= barCount) return; // exit early if OOB
+    // calculate average delta & channel weighted color
+    float deltaAverage = 0;
+    float signalSum = 0;
+    for (int c = 0; c < channelCount; c++){
+        // get needed bar data
+        float s1 = getBar(barIndex,c);
+        float s2 = getBar(barIndex,c+1);
+        // add to delta average
+        deltaAverage += abs(s1-s2);
+        // add to signal sum
+        signalSum += s1;
+    }
+    deltaAverage /= channelCount;
+    float barSignal = signalSum/channelCount;
+    // calculate channel weighted color
+    vec3 channelWeightedColor = vec3(0.0);
+    for (int c = 0; c < channelCount; c++){
+        channelWeightedColor += (channelColor[c]*getBar(barIndex,c))/signalSum;
+    }
+    // calculate raw bar color
+    vec3 rawBarColor = midColor*(1-deltaAverage) + channelWeightedColor*deltaAverage;
+    // weight by bar volume & convert to sRGB
+    vec3 outColor;
+    if (colorSpace == 1){
+        // HSV
+        outColor = volumeInterpHSV(rawBarColor,barSignal);
+        outColor = HSVtosRGB(outColor);
+    }
+    else if (colorSpace == 2){
+        // OkLAB
+        outColor = volumeInterpOkLAB(rawBarColor,barSignal);
+        outColor = OkLABtosRGB(outColor);
+    }
+    else if (colorSpace == 3){
+        // CIELAB
+        outColor = volumeInterpCIELAB(rawBarColor,barSignal);
+        outColor = CIELABtosRGB(outColor);
+    }
+    else {
+        // sRGB
+        outColor = volumeInterpsRGB(rawBarColor,barSignal);
+    }
+    // save to SSBO
+    barData[barIndex] = vec4(outColor.x,outColor.y,outColor.z,barSignal);
+}

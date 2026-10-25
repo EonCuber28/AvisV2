@@ -27,32 +27,21 @@ layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x1
 // in
 uniform int renderX;
 uniform int renderY;
-
 uniform int barCount;
-
-uniform int interpolationMethod;
-
 uniform vec3 BGcolor;
-uniform vec4 midColor;
-uniform vec4 channelColor[6];
-uniform int channelCount;
-uniform int colorSpace;
-
-uniform bool gayMode;
 
 // Texture setups
 
+// SSBOs
+layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
 
 // main code
 void main(){
-    // calculate bar heights
-    // calculate bar colors
-    // Fill ping with BG color
-    // draw rects
-    // draw to ping buffer
-    // draw in alpha-decay texture
-    // draw in bar mask
-    // Smear un-masked pixels upward from ping to pong
-    // apply aplha decay to un-masked pixels from pong to ping
-    // have ping buffer be displayed
+    uint pX = gl_GlobalInvocationID.x;
+    uint pY = gl_GlobalInvocationID.y;
+    if (pX >= renderX || pY > renderY) return;
+    // determine what bar this pixel corresponds to
+    // determine if this pixel is within that bars bounds
+    // draw pixel with bar color if so
+    // draw BG color otherwise
 }
