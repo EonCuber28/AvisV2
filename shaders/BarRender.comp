@@ -20,9 +20,7 @@
 // rendered output | image2D
 
 // thread dispatch stuffs
-layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x16)
-// defines work group size
-// ie: how many threads get dispatched per compute dispatch operation (X*Y*Z groups)
+layout(local_size_x = 16, local_size_y = 16) in;
 
 // in
 uniform int renderX;

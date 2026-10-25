@@ -5,7 +5,6 @@
 // render X               | int
 // redner y               | int
 // BG color               | vec3
-// gay mode               | bool
 
 // primary intermidiates: | data type:
 //- - - - - - - - - - - - + - - - - - - - - -
@@ -17,12 +16,11 @@
 
 // outs:           | data type:
 // - - - - - - - - + - - - - - -
-// rendered output | image2D
+// rendered bars   | image2D
+// drawn bar mask  | image2D
 
 // thread dispatch stuffs
-layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x16)
-// defines work group size
-// ie: how many threads get dispatched per compute dispatch operation (X*Y*Z groups)
+layout(local_size_x = 16, local_size_y = 16) in;
 
 // in
 uniform int renderX;
@@ -42,7 +40,6 @@ void main(){
     if (pX >= renderX || pY > renderY) return;
     // determine what bar this pixel corresponds to
     // determine if this pixel is within that bars bounds
-    // draw to alpha-decay texture if so
     // draw pixel with bar color if so
     // draw to bar mask texture if so
 }

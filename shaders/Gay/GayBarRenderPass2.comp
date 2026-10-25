@@ -29,16 +29,22 @@ uniform int renderX;
 uniform int renderY;
 uniform int barCount;
 uniform vec3 BGcolor;
+uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta
+uniform float decayFactor; // the funny e^(-lambda*delta_t) number
 
 // Texture setups
 
 // SSBOs
 layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
 
-// main code (1 therad per redered pixel
+// main code (1 therad per redered pixel)
 void main(){
     uint pX = gl_GlobalInvocationID.x;
     uint pY = gl_GlobalInvocationID.y;
     if (pX >= renderX || pY > renderY) return;
-    // apply alpha-decay smear effect
+    vec2 thisPixel = vec2(pX,pY);
+    // exit early if this pixel has already been drawn to
+    // sample displaced pixel from previous trail-ed frame (fallback to raw render bars if this is the first frame)
+    // calculate decayed pixel
+    // write decayed pixel to out texture
 }
