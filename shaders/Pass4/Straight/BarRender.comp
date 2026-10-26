@@ -38,6 +38,7 @@ void main(){
     uint pX = gl_GlobalInvocationID.x;
     uint pY = gl_GlobalInvocationID.y;
     if (pX >= renderX || pY > renderY) return;
+    // TODO
     // determine what bar this pixel corresponds to
     // determine if this pixel is within that bars bounds
     // draw pixel with bar color if so

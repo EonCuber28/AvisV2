@@ -5,6 +5,7 @@
 // render X               | int
 // redner y               | int
 // BG color               | vec3
+// gay mode               | bool
 
 // primary intermidiates: | data type:
 //- - - - - - - - - - - - + - - - - - - - - -
@@ -16,30 +17,29 @@
 
 // outs:           | data type:
 // - - - - - - - - + - - - - - -
-// rendered bars   | image2D
-// drawn bar mask  | image2D
+// rendered output | image2D
 
 // thread dispatch stuffs
-layout(local_size_x = 16, local_size_y = 16) in;
+layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x16)
+// defines work group size
+// ie: how many threads get dispatched per compute dispatch operation (X*Y*Z groups)
 
 // in
-uniform int renderX;
-uniform int renderY;
-uniform int barCount;
 uniform vec3 BGcolor;
+uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta
+uniform float decayFactor; // the funny e^(-lambda*delta_t) number
 
 // Texture setups
 
-// SSBOs
-layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
-
-// main code (1 therad per redered pixel
+// main code (1 therad per redered pixel)
 void main(){
     uint pX = gl_GlobalInvocationID.x;
     uint pY = gl_GlobalInvocationID.y;
     if (pX >= renderX || pY > renderY) return;
-    // determine what bar this pixel corresponds to
-    // determine if this pixel is within that bars bounds
-    // draw pixel with bar color if so
-    // draw to bar mask texture if so
+    vec2 thisPixel = vec2(pX,pY);
+    // TODO
+    // exit early if this pixel has already been drawn to
+    // sample displaced pixel from previous trail-ed frame (fallback to raw render bars if this is the first frame)
+    // calculate decayed pixel
+    // write decayed pixel to out texture
 }
