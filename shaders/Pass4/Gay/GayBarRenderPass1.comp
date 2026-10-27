@@ -27,18 +27,30 @@ uniform int barCount;
 uniform vec3 BGcolor;
 
 // Texture setups
+layout(rgba32f, binding = 0) writeonly uniform image2D renderOut; // alpha channel used as bar draw mask
 
 // SSBOs
 layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
 
+void drawPixel(ivec2 pixel, vec4 color){
+    imageStore(renderOut, pixel, color);
+}
+
 // main code (1 therad per redered pixel
 void main(){
-    uint pX = gl_GlobalInvocationID.x;
-    uint pY = gl_GlobalInvocationID.y;
-    if (pX >= renderX || pY > renderY) return;
-    // TODO
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(renderOut);
+    if (pixel.x >= size.x || pixel.y > size.y) return;
     // determine what bar this pixel corresponds to
+    int barIdx = int(round((pixel.x/size.x)*barCount));
+    vec4 thisBar = barData[barIdx];
     // determine if this pixel is within that bars bounds
-    // draw pixel with bar color if so
-    // draw to bar mask texture if so
+    if (pixel.y <= thisBar.w*size.y){
+        // draw pixel with bar color if so and make w = 1
+        drawPixel(pixel, vec4(thisBar.x,thisBar.y,thisBar.z,1));
+    }
+    else {
+        // draw BG color otherwise and make w = 0
+        drawPixel(pixel, vec4(thisBar.x,thisBar.y,thisBar.z,0));
+    }
 }

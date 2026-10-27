@@ -5,6 +5,8 @@
 #   ./build.sh --trace   run Avis on the JVM under the GraalVM tracing agent and save the FFM
 #                        metadata it records into native-image-config/<os>-<arch>/ (commit it)
 #   ./build.sh --clean   delete build/ and dist/ first, then build (combines with --trace)
+#   ./build.sh --glsl-check
+#                        only check the shaders in shaders/ with glslangValidator, no build
 #
 # Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically),
 #        Linux: gcc + zlib headers, macOS: Xcode command line tools,
@@ -77,19 +79,33 @@ check_shader_validator() {
 }
 
 trace=false
+glsl_check=false
 clean_task=""
 gradle_args=()
 for arg in "$@"; do
     case "$arg" in
         --trace) trace=true ;;
+        --glsl-check) glsl_check=true ;;
         --clean) clean_task="clean" ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
         *) gradle_args+=("$arg") ;;   # anything else goes straight to Gradle
     esac
 done
 
+$trace && $glsl_check && die "--trace and --glsl-check can't be used together."
+
 find_gradle_java || die "no JDK 17+ found to run Gradle. Install one (any vendor) or point JAVA_HOME at it."
 echo "Using $JAVA_HOME to run Gradle"
+
+if $glsl_check; then
+    check_shader_validator
+    # --rerun so the shaders are always checked, even when Gradle thinks the task is up to date
+    ./gradlew $clean_task validateShaders --rerun ${gradle_args[@]+"${gradle_args[@]}"}
+    echo
+    echo "Shaders:"
+    sed 's/^/  /' build/reports/shaders/validation.txt
+    exit 0
+fi
 
 if $trace; then
     # the agent run uses GRAALVM_HOME, so point it at the GraalVM 25 toolchain

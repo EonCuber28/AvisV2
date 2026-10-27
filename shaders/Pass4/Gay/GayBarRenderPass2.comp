@@ -1,45 +1,49 @@
 #version 430
 
-// ins:                   | data type
-//- - - - - - - - - - - - + - - - - - - -
-// render X               | int
-// redner y               | int
-// BG color               | vec3
-// gay mode               | bool
-
-// primary intermidiates: | data type:
-//- - - - - - - - - - - - + - - - - - - - - -
-// Ping buffer            | RGB SSBO uffer
-// Pong buffer            | RGB SSBO buffer
-// Bar mask               | boolean SSBO buffer
-// Alpha decay            |
-//   precistance texture  | float SSBO buffer
-
-// outs:           | data type:
-// - - - - - - - - + - - - - - -
-// rendered output | image2D
-
-// thread dispatch stuffs
-layout(local_size_x = 16, local_size_y = 16) in; // work group size of 256 (16x16)
-// defines work group size
-// ie: how many threads get dispatched per compute dispatch operation (X*Y*Z groups)
+// thread allocatio stuffs
+layout(local_size_x = 16, local_size_y = 16) in;
 
 // in
 uniform vec3 BGcolor;
-uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta
+uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta in t
+uniform ivec2 resolution;
 uniform float decayFactor; // the funny e^(-lambda*delta_t) number
 
-// Texture setups
+uniform sampler2D barRender;
+uniform sampler2D lastFrame;
+layout(rgba32f, binding = 0) uniform writeonly image2D outRender;
 
-// main code (1 therad per redered pixel)
+// getters
+vec4 getBarDrawColor(vec2 uv){
+    return textureLod(barRender, uv, 0.0);
+}
+vec4 getLastFrameColor(vec2 uv){
+    return textureLod(lastFrame, uv, 0.0);
+}
+
+// main code (ran once per output pixel)
 void main(){
-    uint pX = gl_GlobalInvocationID.x;
-    uint pY = gl_GlobalInvocationID.y;
-    if (pX >= renderX || pY > renderY) return;
-    vec2 thisPixel = vec2(pX,pY);
-    // TODO
-    // exit early if this pixel has already been drawn to
-    // sample displaced pixel from previous trail-ed frame (fallback to raw render bars if this is the first frame)
-    // calculate decayed pixel
-    // write decayed pixel to out texture
+    vec2 pixel = vec2(gl_GlobalInvocationID.xy); // x, y
+    ivec2 size = ivec2(imageSize(outRender));    // W, H
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+    // sample pixels
+    vec4 drawnBarColor = getBarDrawColor((pixel+0.5)/size); // xyz:I_t, w:M_t
+    // calculate new pixel color
+    vec3 newColor;
+    if (drawnBarColor.w == 1){
+        newColor = drawnBarColor.xyz;
+    } else {
+        // get shifted pixel position
+        vec2 smearedPixSamplePos = pixel+smearVect;
+        vec3 smearedPixColor;
+        if (smearedPixSamplePos.x >= size.x || smearedPixSamplePos.y >= size.y
+            || smearedPixSamplePos.x < 0 || smearedPixSamplePos.y < 0){
+            smearedPixColor = BGcolor;
+        } else {
+            smearedPixColor = getLastFrameColor((smearedPixSamplePos+0.5)/size).xyz;
+        }
+        // calculate the new color
+        newColor = BGcolor + vec3(decayFactor)*(smearedPixColor - BGcolor);
+    }
+    imageStore(outRender, ivec2(pixel.x,pixel.y), vec4(newColor.x,newColor.y,newColor.z,1.0));
 }

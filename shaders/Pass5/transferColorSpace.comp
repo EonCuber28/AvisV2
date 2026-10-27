@@ -12,7 +12,7 @@ uniform int inColorSpace;
 uniform int outColorSpace;
 
 // in/out texture
-layout(rgba32f, binding = 1) uniform image2D image;
+layout(rgba32f, binding = 0) uniform image2D image;
 
 // color conversion functions written by Claude Sonnet 5.5
 // ------------------------------------------------------------------- helpers
@@ -111,41 +111,6 @@ vec3 cieLabToXYZ(vec3 lab) {
     float fz = fy - lab.z / 200.0;
     return vec3(labFInv(fx), labFInv(fy), labFInv(fz)) * D65_WHITE;
 }
-
-// ----------------------------------------------------------------- OkLab ->
-vec3 OkLABtoHSV(vec3 color) {
-    return RGBtoHSV(OkLABtoRGB(color));
-}
-vec3 OkLABtoCIELAB(vec3 color) {
-    return xyzToCIELab(linearToXYZ(okLabToLinear(color)));
-}
-vec3 OkLABtoRGB(vec3 color) {
-    return linearToSrgb(okLabToLinear(color));
-}
-
-// ------------------------------------------------------------------- HSV ->
-vec3 HSVtoOkLAB(vec3 color) {
-    return RGBtoOkLAB(HSVtoRGB(color));
-}
-vec3 HSVtoCIELAB(vec3 color) {
-    return RGBtoCIELAB(HSVtoRGB(color));
-}
-vec3 HSVtoRGB(vec3 color) {
-    vec3 p = abs(fract(color.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
-    return color.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), color.y);
-}
-
-// ---------------------------------------------------------------- CIELAB ->
-vec3 CIELABtoOkLAB(vec3 color) {
-    return linearToOkLab(xyzToLinear(cieLabToXYZ(color)));
-}
-vec3 CIELABtoHSV(vec3 color) {
-    return RGBtoHSV(CIELABtoRGB(color));
-}
-vec3 CIELABtoRGB(vec3 color) {
-    return linearToSrgb(xyzToLinear(cieLabToXYZ(color)));
-}
-
 // ------------------------------------------------------------------- RGB ->
 vec3 RGBtoOkLAB(vec3 color) {
     return linearToOkLab(srgbToLinear(color));
@@ -162,6 +127,40 @@ vec3 RGBtoHSV(vec3 color) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
+// ------------------------------------------------------------------- HSV ->
+vec3 HSVtoRGB(vec3 color) {
+    vec3 p = abs(fract(color.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return color.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), color.y);
+}
+vec3 HSVtoOkLAB(vec3 color) {
+    return RGBtoOkLAB(HSVtoRGB(color));
+}
+vec3 HSVtoCIELAB(vec3 color) {
+    return RGBtoCIELAB(HSVtoRGB(color));
+}
+
+// ----------------------------------------------------------------- OkLab ->
+vec3 OkLABtoRGB(vec3 color) {
+    return linearToSrgb(okLabToLinear(color));
+}
+vec3 OkLABtoHSV(vec3 color) {
+    return RGBtoHSV(OkLABtoRGB(color));
+}
+vec3 OkLABtoCIELAB(vec3 color) {
+    return xyzToCIELab(linearToXYZ(okLabToLinear(color)));
+}
+
+// ---------------------------------------------------------------- CIELAB ->
+vec3 CIELABtoRGB(vec3 color) {
+    return linearToSrgb(xyzToLinear(cieLabToXYZ(color)));
+}
+vec3 CIELABtoHSV(vec3 color) {
+    return RGBtoHSV(CIELABtoRGB(color));
+}
+vec3 CIELABtoOkLAB(vec3 color) {
+    return linearToOkLab(xyzToLinear(cieLabToXYZ(color)));
+}
+
 vec3 getColor(ivec2 pixel){
     vec4 fullPixel = imageLoad(image, pixel);
     return vec3(fullPixel.x,fullPixel.y,fullPixel.z);
@@ -169,12 +168,12 @@ vec3 getColor(ivec2 pixel){
 void setPx(ivec2 pixel, vec3 color){
     // retain previous pixels w axis
     vec4 newColor = vec4(color.x,color.y,color.z,imageLoad(image,pixel).w);
-    imageStore(image, piexel, newColor);
+    imageStore(image, pixel, newColor);
 }
 
 void main(){
     ivec2 thisPixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(img);
+    ivec2 size = imageSize(image);
     if (thisPixel.x >= size.x || thisPixel.y >= size.y) return;
     // process color
     vec3 outColor = getColor(thisPixel);

@@ -23,24 +23,34 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 // in
-uniform int renderX;
-uniform int renderY;
 uniform int barCount;
 uniform vec3 BGcolor;
 
 // Texture setups
+layout(rgba32f, binding = 1) writeonly uniform image2D renderOut;
 
 // SSBOs
 layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
 
+void drawPixel(ivec2 pixel, vec3 color){
+    imageStore(renderOut, pixel, vec4(color.x,color.y,color.z,0));
+}
+
 // main code
 void main(){
-    uint pX = gl_GlobalInvocationID.x;
-    uint pY = gl_GlobalInvocationID.y;
-    if (pX >= renderX || pY > renderY) return;
-    // TODO
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(renderOut);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
     // determine what bar this pixel corresponds to
+    int barIdx = int(round((pixel.x/size.x)*barCount));
+    vec4 thisBar = barData[barIdx];
     // determine if this pixel is within that bars bounds
-    // draw pixel with bar color if so
-    // draw BG color otherwise
+    if (pixel.y <= thisBar.w*size.y){
+        // draw pixel with bar color if so
+        drawPixel(pixel, vec3(thisBar.x,thisBar.y,thisBar.z));
+    }
+    else {
+        // draw BG color otherwise
+        drawPixel(pixel, BGcolor);
+    }
 }

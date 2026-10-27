@@ -5,8 +5,9 @@
 #   .\build.ps1 -Trace      run Avis on the JVM under the GraalVM tracing agent and save the FFM
 #                           metadata it records into native-image-config\<os>-<arch>\ (commit it)
 #   .\build.ps1 -Clean      delete build\ and dist\ first, then build (combines with -Trace)
+#   .\build.ps1 -GlslCheck  only check the shaders in shaders\ with glslangValidator, no build
 #
-# build.sh's --trace, --clean and --console spellings work too.
+# build.sh's --trace, --clean, --console and --glsl-check spellings work too.
 #
 # Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically) and
 #        Visual Studio 2022 (or Build Tools) with the "Desktop development with C++" workload,
@@ -15,6 +16,7 @@ param(
     [switch]$Trace,
     [switch]$Console,
     [switch]$Clean,
+    [switch]$GlslCheck,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$GradleArgs = @()
 )
 $ErrorActionPreference = 'Stop'
@@ -25,13 +27,26 @@ switch ($GradleArgs) {
     '--trace' { $Trace = $true }
     '--clean' { $Clean = $true }
     '--console' { $Console = $true }
+    '--glsl-check' { $GlslCheck = $true }
 }
-$GradleArgs = @($GradleArgs | Where-Object { $_ -notin '--trace', '--clean', '--console' })
+$GradleArgs = @($GradleArgs | Where-Object { $_ -notin '--trace', '--clean', '--console', '--glsl-check' })
 $cleanTask = if ($Clean) { @('clean') } else { @() }
 
 function Fail($message) {
     Write-Host "`nerror: $message" -ForegroundColor Red
     exit 1
+}
+
+if ($Trace -and $GlslCheck) { Fail "-Trace and -GlslCheck can't be used together." }
+
+function Assert-ShaderValidator {
+    $hasValidator = (Get-Command glslangValidator.exe -ErrorAction SilentlyContinue) -or
+        ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK 'Bin\glslangValidator.exe'))) -or
+        ($GradleArgs | Where-Object { $_ -like '-PglslangValidator=*' })
+    if (-not $hasValidator) {
+        Fail ('glslangValidator not found (it checks the shaders). Install the Vulkan SDK ' +
+              '(https://vulkan.lunarg.com/sdk/home) or a glslang release (https://github.com/KhronosGroup/glslang/releases).')
+    }
 }
 
 function Get-JavaMajor($java) {
@@ -69,6 +84,16 @@ if (-not (Find-GradleJava)) {
 }
 Write-Host "Using $env:JAVA_HOME to run Gradle"
 
+if ($GlslCheck) {
+    Assert-ShaderValidator
+    # --rerun so the shaders are always checked, even when Gradle thinks the task is up to date
+    & .\gradlew.bat @cleanTask validateShaders --rerun @GradleArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "`nShaders:"
+    Get-Content build\reports\shaders\validation.txt | ForEach-Object { "  $_" }
+    exit 0
+}
+
 if ($Trace) {
     # the agent run uses GRAALVM_HOME, so point it at the GraalVM 25 toolchain
     $env:GRAALVM_HOME = (& .\gradlew.bat -q graalHome | Select-Object -Last 1)
@@ -92,13 +117,7 @@ if (-not $vcTools) {
 }
 
 # shaders are checked with glslangValidator before the native build
-$hasValidator = (Get-Command glslangValidator.exe -ErrorAction SilentlyContinue) -or
-    ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK 'Bin\glslangValidator.exe'))) -or
-    ($GradleArgs | Where-Object { $_ -like '-PglslangValidator=*' })
-if (-not $hasValidator) {
-    Fail ('glslangValidator not found (it checks the shaders). Install the Vulkan SDK ' +
-          '(https://vulkan.lunarg.com/sdk/home) or a glslang release (https://github.com/KhronosGroup/glslang/releases).')
-}
+Assert-ShaderValidator
 
 if ($Console) { $GradleArgs += '-Pconsole' }
 & .\gradlew.bat @cleanTask dist @GradleArgs
