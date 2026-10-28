@@ -31,4 +31,8 @@ public class AudioManager {
     public SystemAudioStreamDevice[] getAvailableDevices(){
         return thisPlatform.availableDevices();
     }
+
+    public void halt(){
+        // TODO
+    }
 }

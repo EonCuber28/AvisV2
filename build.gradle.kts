@@ -47,58 +47,103 @@ application {
     applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
 }
 
-// shaders stay in /shaders and ship on the classpath as /shaders/*.comp
-tasks.processResources {
-    from("shaders") { into("shaders") }
-}
-
-// Shaders are still compiled by the GPU driver at runtime; this only catches GLSL errors at build time.
-abstract class ValidateShaders : DefaultTask() {
-    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
-    abstract val shaders: ConfigurableFileCollection
+// Each graphics backend has its own shader folder, built its own way, and keeps that folder on the classpath:
+//   shaders/OpenGL/Pass1/QFT.comp -> /shaders/OpenGL/Pass1/QFT.comp      GLSL, checked here, compiled by the GL driver at runtime
+//   shaders/Vulkan/Pass1/QFT.comp -> /shaders/Vulkan/Pass1/QFT.comp.spv  compiled to SPIR-V here; the GLSL doesn't ship
+abstract class BuildShaders : DefaultTask() {
+    @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceDir: DirectoryProperty
     @get:Input
-    abstract val validator: Property<String>
+    abstract val compiler: Property<String>
+    // set: compile to SPIR-V for this Vulkan version. unset: only check the GLSL (OpenGL rules) and ship it as is
+    @get:Input @get:Optional
+    abstract val vulkanTarget: Property<String>
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
     @get:OutputFile
     abstract val report: RegularFileProperty
     @get:Inject
     abstract val exec: ExecOperations
+    @get:Inject
+    abstract val fs: FileSystemOperations
+    @get:Inject
+    abstract val objects: ObjectFactory
 
     @TaskAction
-    fun validate() {
-        val failures = shaders.files.sortedBy { it.name }.mapNotNull { shader ->
+    fun build() {
+        fs.delete { delete(outputDir) } // so a deleted or renamed shader doesn't leave its old output behind
+        val shaders = mutableListOf<Pair<String, File>>()
+        objects.fileTree().from(sourceDir)
+            .matching { include("**/*.comp", "**/*.vert", "**/*.frag", "**/*.geom", "**/*.tesc", "**/*.tese") }
+            .visit { if (!isDirectory) shaders += path to file }
+        shaders.sortBy { it.first }
+        val spirv = vulkanTarget.isPresent
+
+        val failures = shaders.mapNotNull { (path, shader) ->
+            val out = outputDir.file(if (spirv) "$path.spv" else path).get().asFile
+            out.parentFile.mkdirs()
             val output = ByteArrayOutputStream()
             val result = try {
                 exec.exec {
-                    commandLine(validator.get(), shader.path)
+                    if (spirv) commandLine(compiler.get(), "-V", "--target-env", vulkanTarget.get(), "-o", out.path, shader.path)
+                    else commandLine(compiler.get(), shader.path)
                     standardOutput = output
                     errorOutput = output
                     isIgnoreExitValue = true
                 }
             } catch (e: Exception) {
                 throw GradleException(
-                    "Could not run '${validator.get()}'. Install glslang: 'sudo apt install glslang-tools' (Linux), " +
+                    "Could not run '${compiler.get()}'. Install glslang: 'sudo apt install glslang-tools' (Linux), " +
                     "'brew install glslang' (macOS), or the Vulkan SDK (Windows). " +
                     "Or point -PglslangValidator=<path> at the executable.", e)
             }
-            if (result.exitValue == 0) null else output.toString().trim()
+            if (result.exitValue != 0) return@mapNotNull output.toString().trim()
+            if (!spirv) shader.copyTo(out, overwrite = true)
+            null
         }
-        if (failures.isNotEmpty()) throw GradleException("GLSL validation failed:\n\n" + failures.joinToString("\n\n"))
-        report.get().asFile.writeText(shaders.files.sortedBy { it.name }.joinToString("\n") { "${it.name}: OK" } + "\n")
+        val backend = sourceDir.get().asFile.name
+        if (failures.isNotEmpty()) {
+            throw GradleException("$backend shaders failed ${if (spirv) "SPIR-V compilation" else "GLSL validation"}:\n\n" +
+                failures.joinToString("\n\n"))
+        }
+        report.get().asFile.writeText(shaders.joinToString("") { (path, _) ->
+            if (spirv) "$backend/$path -> $backend/$path.spv\n" else "$backend/$path: OK\n"
+        })
     }
 }
 
-val validateShaders = tasks.register<ValidateShaders>("validateShaders") {
-    group = "verification"
-    description = "Checks every shader in /shaders with glslangValidator."
-    shaders.from(fileTree("shaders") { include("**/*.comp", "**/*.vert", "**/*.frag", "**/*.geom", "**/*.tesc", "**/*.tese") })
-    // -PglslangValidator=<path> wins, then the Vulkan SDK's copy, then PATH
-    validator = providers.gradleProperty("glslangValidator")
-        .orElse(providers.environmentVariable("VULKAN_SDK").map { "$it/bin/glslangValidator" })
-        .orElse("glslangValidator")
-    report = layout.buildDirectory.file("reports/shaders/validation.txt")
+// -PglslangValidator=<path> wins, then the Vulkan SDK's copy, then PATH
+val glslangValidator = providers.gradleProperty("glslangValidator")
+    .orElse(providers.environmentVariable("VULKAN_SDK").map { "$it/bin/glslangValidator" })
+    .orElse("glslangValidator")
+
+val openGLShaders = tasks.register<BuildShaders>("openGLShaders") {
+    description = "Checks the GLSL in /shaders/OpenGL with glslangValidator."
+    sourceDir = layout.projectDirectory.dir("shaders/OpenGL")
+    compiler = glslangValidator
+    outputDir = layout.buildDirectory.dir("generated/shaders/OpenGL")
+    report = layout.buildDirectory.file("reports/shaders/OpenGL.txt")
 }
 
-tasks.named("check") { dependsOn(validateShaders) }
+val vulkanShaders = tasks.register<BuildShaders>("vulkanShaders") {
+    description = "Compiles the GLSL in /shaders/Vulkan to SPIR-V with glslangValidator."
+    sourceDir = layout.projectDirectory.dir("shaders/Vulkan")
+    compiler = glslangValidator
+    vulkanTarget = "vulkan1.2" // SPIR-V 1.5; RADV, NVIDIA and MoltenVK all support it
+    outputDir = layout.buildDirectory.dir("generated/shaders/Vulkan")
+    report = layout.buildDirectory.file("reports/shaders/Vulkan.txt")
+}
+
+tasks.register("compileShaders") {
+    group = "build"
+    description = "Builds every backend's shaders (OpenGL checked, Vulkan compiled to SPIR-V)."
+    dependsOn(openGLShaders, vulkanShaders)
+}
+
+tasks.processResources {
+    from(openGLShaders.flatMap { it.outputDir }) { into("shaders/OpenGL") }
+    from(vulkanShaders.flatMap { it.outputDir }) { into("shaders/Vulkan") }
+}
 
 // platform naming, used for the binary name and the per-platform FFM metadata dir
 val osName = System.getProperty("os.name").lowercase().let {
@@ -175,7 +220,7 @@ val repairGraalVM = tasks.register("repairGraalVM") {
     }
 }
 
-tasks.named<BuildNativeImageTask>("nativeCompile") { dependsOn(repairGraalVM, validateShaders) }
+tasks.named<BuildNativeImageTask>("nativeCompile") { dependsOn(repairGraalVM) }
 
 // the agent run (-Pagent) only looks at GRAALVM_HOME/JAVA_HOME, so the build scripts ask for this path first
 tasks.register("graalHome") {

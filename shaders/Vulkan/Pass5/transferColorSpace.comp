@@ -1,0 +1,229 @@
+# version 430
+
+// thread dispatch stuffs
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// all this is to do is to process any given image from one color space into another
+// this will be used for when the user switched color spaces,
+// or for when we want to convert the rendered frame into RGB for display purposes.
+
+// color space conversion data
+uniform int inColorSpace;
+uniform int outColorSpace;
+
+// in/out texture
+layout(rgba32f, binding = 0) uniform image2D image;
+
+// color conversion functions written by Claude Sonnet 5.5
+// ------------------------------------------------------------------- helpers
+// Sign-preserving transfer functions so out-of-gamut values never produce NaN.
+float srgbToLinear1(float c) {
+    float a = abs(c);
+    float l = (a <= 0.04045) ? a / 12.92 : pow((a + 0.055) / 1.055, 2.4);
+    return sign(c) * l;
+}
+
+float linearToSrgb1(float c) {
+    float a = abs(c);
+    float s = (a <= 0.0031308) ? a * 12.92 : 1.055 * pow(a, 1.0 / 2.4) - 0.055;
+    return sign(c) * s;
+}
+
+vec3 srgbToLinear(vec3 c) {
+    return vec3(srgbToLinear1(c.r), srgbToLinear1(c.g), srgbToLinear1(c.b));
+}
+
+vec3 linearToSrgb(vec3 c) {
+    return vec3(linearToSrgb1(c.r), linearToSrgb1(c.g), linearToSrgb1(c.b));
+}
+
+vec3 cbrt3(vec3 v) {
+    return sign(v) * pow(abs(v), vec3(1.0 / 3.0));
+}
+
+// Linear sRGB <-> OkLab
+vec3 linearToOkLab(vec3 c) {
+    vec3 lms = vec3(
+            dot(c, vec3(0.4122214708, 0.5363325363, 0.0514459929)),
+            dot(c, vec3(0.2119034982, 0.6806995451, 0.1073969566)),
+            dot(c, vec3(0.0883024619, 0.2817188376, 0.6299787005))
+    );
+    vec3 q = cbrt3(lms);
+    return vec3(
+            dot(q, vec3(0.2104542553,  0.7936177850, -0.0040720468)),
+            dot(q, vec3(1.9779984951, -2.4285922050,  0.4505937099)),
+            dot(q, vec3(0.0259040371,  0.7827717662, -0.8086757660))
+    );
+}
+vec3 okLabToLinear(vec3 lab) {
+    vec3 q = vec3(
+            lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z,
+            lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z,
+            lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z
+    );
+    vec3 lms = q * q * q;
+    return vec3(
+            dot(lms, vec3( 4.0767416621, -3.3077115913,  0.2309699292)),
+            dot(lms, vec3(-1.2684380046,  2.6097574011, -0.3413193965)),
+            dot(lms, vec3(-0.0041960863, -0.7034186147,  1.7076147010))
+    );
+}
+
+// Linear sRGB <-> XYZ (D65) <-> CIELAB
+const vec3 D65_WHITE = vec3(0.95047, 1.0, 1.08883);
+
+vec3 linearToXYZ(vec3 c) {
+    return vec3(
+            dot(c, vec3(0.4124564, 0.3575761, 0.1804375)),
+            dot(c, vec3(0.2126729, 0.7151522, 0.0721750)),
+            dot(c, vec3(0.0193339, 0.1191920, 0.9503041))
+    );
+}
+vec3 xyzToLinear(vec3 xyz) {
+    return vec3(
+            dot(xyz, vec3( 3.2404542, -1.5371385, -0.4985314)),
+            dot(xyz, vec3(-0.9692660,  1.8760108,  0.0415560)),
+            dot(xyz, vec3( 0.0556434, -0.2040259,  1.0572252))
+    );
+}
+
+const float LAB_EPSILON = 216.0 / 24389.0;
+const float LAB_KAPPA   = 24389.0 / 27.0;
+
+float labF(float t) {
+    return (t > LAB_EPSILON) ? pow(t, 1.0 / 3.0) : (LAB_KAPPA * t + 16.0) / 116.0;
+}
+float labFInv(float f) {
+    float f3 = f * f * f;
+    return (f3 > LAB_EPSILON) ? f3 : (116.0 * f - 16.0) / LAB_KAPPA;
+}
+
+vec3 xyzToCIELab(vec3 xyz) {
+    vec3 t = xyz / D65_WHITE;
+    float fx = labF(t.x);
+    float fy = labF(t.y);
+    float fz = labF(t.z);
+    return vec3(116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
+}
+vec3 cieLabToXYZ(vec3 lab) {
+    float fy = (lab.x + 16.0) / 116.0;
+    float fx = fy + lab.y / 500.0;
+    float fz = fy - lab.z / 200.0;
+    return vec3(labFInv(fx), labFInv(fy), labFInv(fz)) * D65_WHITE;
+}
+// ------------------------------------------------------------------- RGB ->
+vec3 RGBtoOkLAB(vec3 color) {
+    return linearToOkLab(srgbToLinear(color));
+}
+vec3 RGBtoCIELAB(vec3 color) {
+    return xyzToCIELab(linearToXYZ(srgbToLinear(color)));
+}
+vec3 RGBtoHSV(vec3 color) {
+    const vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(color.bg, K.wz), vec4(color.gb, K.xy), step(color.b, color.g));
+    vec4 q = mix(vec4(p.xyw, color.r), vec4(color.r, p.yzx), step(p.x, color.r));
+    float d = q.x - min(q.w, q.y);
+    const float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+// ------------------------------------------------------------------- HSV ->
+vec3 HSVtoRGB(vec3 color) {
+    vec3 p = abs(fract(color.xxx + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return color.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), color.y);
+}
+vec3 HSVtoOkLAB(vec3 color) {
+    return RGBtoOkLAB(HSVtoRGB(color));
+}
+vec3 HSVtoCIELAB(vec3 color) {
+    return RGBtoCIELAB(HSVtoRGB(color));
+}
+
+// ----------------------------------------------------------------- OkLab ->
+vec3 OkLABtoRGB(vec3 color) {
+    return linearToSrgb(okLabToLinear(color));
+}
+vec3 OkLABtoHSV(vec3 color) {
+    return RGBtoHSV(OkLABtoRGB(color));
+}
+vec3 OkLABtoCIELAB(vec3 color) {
+    return xyzToCIELab(linearToXYZ(okLabToLinear(color)));
+}
+
+// ---------------------------------------------------------------- CIELAB ->
+vec3 CIELABtoRGB(vec3 color) {
+    return linearToSrgb(xyzToLinear(cieLabToXYZ(color)));
+}
+vec3 CIELABtoHSV(vec3 color) {
+    return RGBtoHSV(CIELABtoRGB(color));
+}
+vec3 CIELABtoOkLAB(vec3 color) {
+    return linearToOkLab(xyzToLinear(cieLabToXYZ(color)));
+}
+
+vec3 getColor(ivec2 pixel){
+    vec4 fullPixel = imageLoad(image, pixel);
+    return vec3(fullPixel.x,fullPixel.y,fullPixel.z);
+}
+void setPx(ivec2 pixel, vec3 color){
+    // retain previous pixels w axis
+    vec4 newColor = vec4(color.x,color.y,color.z,imageLoad(image,pixel).w);
+    imageStore(image, pixel, newColor);
+}
+
+void main(){
+    ivec2 thisPixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(image);
+    if (thisPixel.x >= size.x || thisPixel.y >= size.y) return;
+    // process color
+    vec3 outColor = getColor(thisPixel);
+    // in is RGB
+    if (inColorSpace == 0){
+        // out is HSV
+        if (outColorSpace == 1)
+            outColor = RGBtoHSV(outColor);
+        // out is OkLAB
+        else if (outColorSpace == 2)
+            outColor = RGBtoOkLAB(outColor);
+        // out is CIELAB
+        else if (outColorSpace == 3)
+            outColor = RGBtoCIELAB(outColor);
+    }
+    // in is HSV
+    else if (inColorSpace == 1){
+        // out is RGB
+        if (outColorSpace == 0)
+            outColor = HSVtoRGB(outColor);
+        // out is OkLAB
+        else if (outColorSpace == 2)
+            outColor = HSVtoOkLAB(outColor);
+        // out is CIELAB
+        else if (outColorSpace == 3)
+            outColor = HSVtoCIELAB(outColor);
+    }
+    // in is OkLAB
+    else if (inColorSpace == 2){
+        // out is RGB
+        if (outColorSpace == 0)
+            outColor = OkLABtoRGB(outColor);
+        // out is HSV
+        else if (outColorSpace == 1)
+            outColor = OkLABtoHSV(outColor);
+        // out is CIELAB
+        else if (outColorSpace == 3)
+            outColor = OkLABtoCIELAB(outColor);
+    }
+    // in is CIELAB
+    else if (inColorSpace == 3){
+        // out is RGB
+        if (outColorSpace == 0)
+            outColor = CIELABtoRGB(outColor);
+        // out is HSV
+        else if (outColorSpace == 1)
+            outColor = CIELABtoHSV(outColor);
+        // out is OkLAB
+        else if (outColorSpace == 2)
+            outColor = CIELABtoOkLAB(outColor);
+    }
+    setPx(thisPixel, outColor);
+}

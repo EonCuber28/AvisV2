@@ -27,8 +27,8 @@ uniform uint channelCount;
 uniform uint barCount;
 
 // SSBOs
-layout(std430, binding = 0) readonly buffer channelFrequencyData { float amplitude[]; };
-layout(std430, binding = 1) buffer outBars { float barData[]; };
+layout(std430, binding = 1) readonly buffer channelFrequencyData { float amplitude[]; };
+layout(std430, binding = 2) buffer outBars { float barData[]; };
 
 // constants
 const float PI  = 3.14159265358979;

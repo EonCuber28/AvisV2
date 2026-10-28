@@ -6,11 +6,12 @@
 #                        metadata it records into native-image-config/<os>-<arch>/ (commit it)
 #   ./build.sh --clean   delete build/ and dist/ first, then build (combines with --trace)
 #   ./build.sh --glsl-check
-#                        only check the shaders in shaders/ with glslangValidator, no build
+#                        only build the shaders with glslangValidator (check shaders/OpenGL, compile
+#                        shaders/Vulkan to SPIR-V), no build
 #
 # Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically),
 #        Linux: gcc + zlib headers, macOS: Xcode command line tools,
-#        and glslangValidator to check the shaders.
+#        and glslangValidator to build the shaders.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -73,9 +74,9 @@ check_shader_validator() {
         [[ "$arg" == -PglslangValidator=* ]] && return 0
     done
     if [[ "$(uname -s)" == Darwin ]]; then
-        die "glslangValidator not found (it checks the shaders). Install it with 'brew install glslang'."
+        die "glslangValidator not found (it builds the shaders). Install it with 'brew install glslang'."
     fi
-    die "glslangValidator not found (it checks the shaders). Install it, e.g. 'sudo apt install glslang-tools' or 'sudo dnf install glslang'."
+    die "glslangValidator not found (it builds the shaders). Install it, e.g. 'sudo apt install glslang-tools' or 'sudo dnf install glslang'."
 }
 
 trace=false
@@ -99,11 +100,12 @@ echo "Using $JAVA_HOME to run Gradle"
 
 if $glsl_check; then
     check_shader_validator
-    # --rerun so the shaders are always checked, even when Gradle thinks the task is up to date
-    ./gradlew $clean_task validateShaders --rerun ${gradle_args[@]+"${gradle_args[@]}"}
+    # --rerun-tasks so the shaders are always rebuilt, even when Gradle thinks the task is up to date;
+    # --continue so one backend's errors don't hide the other's
+    ./gradlew $clean_task compileShaders --rerun-tasks --continue ${gradle_args[@]+"${gradle_args[@]}"}
     echo
     echo "Shaders:"
-    sed 's/^/  /' build/reports/shaders/validation.txt
+    cat build/reports/shaders/OpenGL.txt build/reports/shaders/Vulkan.txt | sed 's/^/  /'
     exit 0
 fi
 

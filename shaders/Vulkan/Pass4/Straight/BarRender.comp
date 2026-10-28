@@ -30,7 +30,7 @@ uniform vec3 BGcolor;
 layout(rgba32f, binding = 1) writeonly uniform image2D renderOut;
 
 // SSBOs
-layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
+layout(std430, binding = 3) buffer inBars { vec4 barData[]; };
 
 void drawPixel(ivec2 pixel, vec3 color){
     imageStore(renderOut, pixel, vec4(color.x,color.y,color.z,0));
@@ -47,7 +47,7 @@ void main(){
     // determine if this pixel is within that bars bounds
     if (pixel.y <= thisBar.w*size.y){
         // draw pixel with bar color if so
-        drawPixel(pixel, vec3(thisBar.x,thisBar.y,thisBar.z));
+        drawPixel(pixel, vec3(thisBar.xyz));
     }
     else {
         // draw BG color otherwise

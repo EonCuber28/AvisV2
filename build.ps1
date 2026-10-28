@@ -5,13 +5,14 @@
 #   .\build.ps1 -Trace      run Avis on the JVM under the GraalVM tracing agent and save the FFM
 #                           metadata it records into native-image-config\<os>-<arch>\ (commit it)
 #   .\build.ps1 -Clean      delete build\ and dist\ first, then build (combines with -Trace)
-#   .\build.ps1 -GlslCheck  only check the shaders in shaders\ with glslangValidator, no build
+#   .\build.ps1 -GlslCheck  only build the shaders with glslangValidator (check shaders\OpenGL,
+#                           compile shaders\Vulkan to SPIR-V), no build
 #
 # build.sh's --trace, --clean, --console and --glsl-check spellings work too.
 #
 # Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically) and
 #        Visual Studio 2022 (or Build Tools) with the "Desktop development with C++" workload,
-#        and glslangValidator (ships with the Vulkan SDK) to check the shaders.
+#        and glslangValidator (ships with the Vulkan SDK) to build the shaders.
 param(
     [switch]$Trace,
     [switch]$Console,
@@ -44,7 +45,7 @@ function Assert-ShaderValidator {
         ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK 'Bin\glslangValidator.exe'))) -or
         ($GradleArgs | Where-Object { $_ -like '-PglslangValidator=*' })
     if (-not $hasValidator) {
-        Fail ('glslangValidator not found (it checks the shaders). Install the Vulkan SDK ' +
+        Fail ('glslangValidator not found (it builds the shaders). Install the Vulkan SDK ' +
               '(https://vulkan.lunarg.com/sdk/home) or a glslang release (https://github.com/KhronosGroup/glslang/releases).')
     }
 }
@@ -86,11 +87,12 @@ Write-Host "Using $env:JAVA_HOME to run Gradle"
 
 if ($GlslCheck) {
     Assert-ShaderValidator
-    # --rerun so the shaders are always checked, even when Gradle thinks the task is up to date
-    & .\gradlew.bat @cleanTask validateShaders --rerun @GradleArgs
+    # --rerun-tasks so the shaders are always rebuilt, even when Gradle thinks the task is up to date;
+    # --continue so one backend's errors don't hide the other's
+    & .\gradlew.bat @cleanTask compileShaders --rerun-tasks --continue @GradleArgs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "`nShaders:"
-    Get-Content build\reports\shaders\validation.txt | ForEach-Object { "  $_" }
+    Get-Content build\reports\shaders\OpenGL.txt, build\reports\shaders\Vulkan.txt | ForEach-Object { "  $_" }
     exit 0
 }
 
@@ -116,7 +118,7 @@ if (-not $vcTools) {
           '"Desktop development with C++" workload: https://visualstudio.microsoft.com/visual-cpp-build-tools/')
 }
 
-# shaders are checked with glslangValidator before the native build
+# the native build runs glslangValidator over the shaders
 Assert-ShaderValidator
 
 if ($Console) { $GradleArgs += '-Pconsole' }

@@ -2,7 +2,7 @@ package com.EonCuber.config;
 
 // this is so ugly and I love it
 public final class Settings {
-    // default values
+    // default (example) values
     private static volatile barSmoothingMethod spectrogramBarSmoothingMethod = barSmoothingMethod.CubicSpline;
     private static volatile displayColorSpace randomColorGeneratorSpace = displayColorSpace.OkLAB;
     private static volatile displayColorSpace primaryDisplayColorSpace = displayColorSpace.sRGB;
@@ -19,6 +19,7 @@ public final class Settings {
     private static volatile float[] frequencyBiasData = {1,1,0.5f,0.2f};
     private static volatile int targetUpdateRate = 30;
     private static volatile int displayBarCount = 1280;
+    private static volatile boolean gayMode = false;
 
     private static String settingsPath;
     private static boolean initialized = false;
@@ -85,6 +86,9 @@ public final class Settings {
     public static int getDisplayBarCount(){
         return displayBarCount;
     }
+    public static boolean getGayMode(){
+        return gayMode;
+    }
     // setting setters
     public static void setSpectrogramBarSmoothingMethod(barSmoothingMethod newVal){
         spectrogramBarSmoothingMethod = newVal;
@@ -148,6 +152,10 @@ public final class Settings {
     }
     public static void setDisplayBarCount(int newVal){
         displayBarCount = newVal;
+        syncSettings();
+    }
+    public static void setGayMode(boolean newVal){
+        gayMode = newVal;
         syncSettings();
     }
 }

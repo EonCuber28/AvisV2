@@ -5,6 +5,7 @@
 // render X               | int
 // redner y               | int
 // BG color               | vec3
+// gay mode               | bool
 
 // primary intermidiates: | data type:
 //- - - - - - - - - - - - + - - - - - - - - -
@@ -16,8 +17,7 @@
 
 // outs:           | data type:
 // - - - - - - - - + - - - - - -
-// rendered bars   | image2D
-// drawn bar mask  | image2D
+// rendered output | image2D
 
 // thread dispatch stuffs
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -27,30 +27,30 @@ uniform int barCount;
 uniform vec3 BGcolor;
 
 // Texture setups
-layout(rgba32f, binding = 0) writeonly uniform image2D renderOut; // alpha channel used as bar draw mask
+layout(rgba32f, binding = 1) writeonly uniform image2D renderOut;
 
 // SSBOs
-layout(std430, binding = 0) buffer inBars { vec4 barData[]; };
+layout(std430, binding = 3) buffer inBars { vec4 barData[]; };
 
-void drawPixel(ivec2 pixel, vec4 color){
-    imageStore(renderOut, pixel, color);
+void drawPixel(ivec2 pixel, vec3 color){
+    imageStore(renderOut, pixel, vec4(color.x,color.y,color.z,0));
 }
 
-// main code (1 therad per redered pixel
+// main code
 void main(){
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(renderOut);
-    if (pixel.x >= size.x || pixel.y > size.y) return;
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
     // determine what bar this pixel corresponds to
     int barIdx = int(round((pixel.x/size.x)*barCount));
     vec4 thisBar = barData[barIdx];
     // determine if this pixel is within that bars bounds
     if (pixel.y <= thisBar.w*size.y){
-        // draw pixel with bar color if so and make w = 1
-        drawPixel(pixel, vec4(thisBar.x,thisBar.y,thisBar.z,1));
+        // draw pixel with bar color if so
+        drawPixel(pixel, vec3(thisBar.xyz));
     }
     else {
-        // draw BG color otherwise and make w = 0
-        drawPixel(pixel, vec4(thisBar.x,thisBar.y,thisBar.z,0));
+        // draw BG color otherwise
+        drawPixel(pixel, BGcolor);
     }
 }

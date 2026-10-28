@@ -6,7 +6,6 @@ layout(local_size_x = 16, local_size_y = 16) in;
 // in
 uniform vec3 BGcolor;
 uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta in t
-uniform ivec2 resolution;
 uniform float decayFactor; // the funny e^(-lambda*delta_t) number
 
 uniform sampler2D barRender;

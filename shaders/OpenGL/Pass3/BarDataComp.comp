@@ -23,9 +23,9 @@ uniform vec3 midColor;
 uniform uint barCount;
 
 // SSBOs
-layout(std430, binding = 0) readonly buffer perChannelBarHeight { float barAmplitude[]; };
-layout(std430, binding = 1) buffer outBars { vec4 barData[]; };
-layout(std430, binding = 2) readonly buffer channelColors { vec3 channelColor[]; };
+layout(std430, binding = 2) readonly buffer perChannelBarHeight { float barAmplitude[]; };
+layout(std430, binding = 3) buffer outBars { vec4 barData[]; };
+layout(std430, binding = 4) readonly buffer channelColors { vec3 channelColor[]; };
 
 // constants
 const float PI  = 3.14159265358979;

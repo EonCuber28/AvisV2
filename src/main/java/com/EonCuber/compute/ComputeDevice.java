@@ -3,10 +3,10 @@ package com.EonCuber.compute;
 import com.EonCuber.audio.AudioBuffer;
 
 public interface ComputeDevice {
+    void init();
+    void halt();
     void setComputeInData(
             AudioBuffer inAudio,
-            int sampleRate
-    );
+            int sampleRate);
     void onFrame();
-    Object getDisplay();
 }

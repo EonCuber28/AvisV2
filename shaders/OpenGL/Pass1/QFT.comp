@@ -28,16 +28,16 @@ layout(local_size_x = 64) in; // work group size of 64
 
 // in
 layout(binding = 0) uniform sampler1D frequencyBiases;
+layout(binding = 1) uniform sampler2D audioSamples;
 uniform float biasInfluence;
 uniform float frequencyCyclesPerSample;
 uniform bool useFTiVect;
 uniform int audioSampleRate;
-layout(binding = 1) uniform sampler2D audioSamples;
 uniform int channelCount;
 
 // SSBO setup
 layout(std430, binding = 0) readonly buffer targetFrequencies { float signal[]; }; // input from program (along with all the other args)
-layout(std430, binding = 1) buffer channelFrequencyData { float amplitude[]; };
+layout(std430, binding = 1) writeonly buffer channelFrequencyData { float amplitude[]; };
 // constants
 const float PI  = 3.14159265358979;
 const float TAU = 6.28318530717959; // 2π
