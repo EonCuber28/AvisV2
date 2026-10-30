@@ -17,15 +17,17 @@
 layout(local_size_x = 64) in; // work group size of 64
 
 // in data stuffs
-uniform uint channelCount;
-uniform int colorSpace;
-uniform vec3 midColor;
-uniform uint barCount;
+layout(push_constant) uniform Params{
+    vec3 midColor;
+    uint channelCount;
+    uint barCount;
+    int colorSpace;
+} params;
 
 // SSBOs
-layout(std430, binding = 2) readonly buffer perChannelBarHeight { float barAmplitude[]; };
-layout(std430, binding = 3) buffer outBars { vec4 barData[]; };
-layout(std430, binding = 4) readonly buffer channelColors { vec3 channelColor[]; };
+layout(std430, binding = 4) readonly buffer perChannelBarHeight { float barAmplitude[]; };
+layout(std430, binding = 5) readonly buffer channelColors { vec4 channelColor[]; };
+layout(std430, binding = 6) writeonly buffer outBars { vec4 barData[]; };
 
 // constants
 const float PI  = 3.14159265358979;
@@ -46,20 +48,20 @@ vec3 volumeInterpHSV(vec3 HSV, float volume){
 
 float getBar(uint barIdx, int channel){
     // prevent OOM reads
-    barIdx = int(mod(barIdx, barCount));
-    channel = int(mod(channel, channelCount));
+    barIdx = int(mod(barIdx, params.barCount));
+    channel = int(mod(channel, params.channelCount));
     // read from SSBO
-    return barAmplitude[(channel*barCount)+barIdx];
+    return barAmplitude[(channel*params.barCount)+barIdx];
 }
 
 // per-bar code
 void main() {
     uint barIndex = gl_GlobalInvocationID.x;
-    if (barIndex >= barCount) return; // exit early if OOB
+    if (barIndex >= params.barCount) return; // exit early if OOB
     // calculate average delta & channel weighted color
     float deltaAverage = 0;
     float signalSum = 0;
-    for (int c = 0; c < channelCount; c++){
+    for (int c = 0; c < params.channelCount; c++){
         // get needed bar data
         float s1 = getBar(barIndex,c);
         float s2 = getBar(barIndex,c+1);
@@ -68,26 +70,26 @@ void main() {
         // add to signal sum
         signalSum += s1;
     }
-    deltaAverage /= channelCount;
-    float barSignal = signalSum/channelCount;
+    deltaAverage /= params.channelCount;
+    float barSignal = signalSum/params.channelCount;
     // calculate channel weighted color
-    vec3 channelWeightedColor = vec3(0.0);
-    for (int c = 0; c < channelCount; c++){
-        channelWeightedColor += (channelColor[c]*getBar(barIndex,c))/signalSum;
+    vec4 channelWeightedColor = vec4(0.0);
+    for (int c = 0; c < params.channelCount; c++){
+        channelWeightedColor += (channelColor[c]*getBar(barIndex,c))/max(signalSum,1e-6);
     }
     // calculate raw bar color
-    vec3 rawBarColor = midColor*(1-deltaAverage) + channelWeightedColor*deltaAverage;
+    vec3 rawBarColor = vec3((params.midColor*(1-deltaAverage) + channelWeightedColor*deltaAverage).xyz);
     // weight by bar volume & convert to RGB
     vec3 outColor;
-    if (colorSpace == 1){
+    if (params.colorSpace == 1){
         // HSV
         outColor = volumeInterpHSV(rawBarColor,barSignal);
     }
-    else if (colorSpace == 2){
+    else if (params.colorSpace == 2){
         // OkLAB
         outColor = volumeInterpOkLAB(rawBarColor,barSignal);
     }
-    else if (colorSpace == 3){
+    else if (params.colorSpace == 3){
         // CIELAB
         outColor = volumeInterpCIELAB(rawBarColor,barSignal);
     }

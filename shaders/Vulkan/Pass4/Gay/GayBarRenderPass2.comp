@@ -4,19 +4,22 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 // in
-uniform vec3 BGcolor;
-uniform vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta in t
-uniform float decayFactor; // the funny e^(-lambda*delta_t) number
+layout(push_constant) uniform Params{
+    vec3 BGcolor;
+    vec2 smearVect; // calculated on the fly by the CPU dependant on the time delta in t
+    float decayFactor; // the funny e^(-lambda*delta_t) number
+} params;
 
-uniform sampler2D barRender;
-uniform sampler2D lastFrame;
-layout(rgba32f, binding = 0) uniform writeonly image2D outRender;
+layout(set = 0, binding = 7) uniform sampler2D barRender;
+layout(set = 0, binding = 9) uniform sampler2D lastFrame;
+
+layout(rgba32f, binding = 8) uniform writeonly image2D outRender;
 
 // getters
 vec4 getBarDrawColor(vec2 uv){
     return textureLod(barRender, uv, 0.0);
 }
-vec4 getLastFrameColor(vec2 uv){
+vec4 getlastFrameColor(vec2 uv){
     return textureLod(lastFrame, uv, 0.0);
 }
 
@@ -33,16 +36,16 @@ void main(){
         newColor = drawnBarColor.xyz;
     } else {
         // get shifted pixel position
-        vec2 smearedPixSamplePos = pixel+smearVect;
+        vec2 smearedPixSamplePos = pixel+params.smearVect;
         vec3 smearedPixColor;
         if (smearedPixSamplePos.x >= size.x || smearedPixSamplePos.y >= size.y
             || smearedPixSamplePos.x < 0 || smearedPixSamplePos.y < 0){
-            smearedPixColor = BGcolor;
+            smearedPixColor = params.BGcolor;
         } else {
-            smearedPixColor = getLastFrameColor((smearedPixSamplePos+0.5)/size).xyz;
+            smearedPixColor = getlastFrameColor((smearedPixSamplePos+0.5)/size).xyz;
         }
         // calculate the new color
-        newColor = BGcolor + vec3(decayFactor)*(smearedPixColor - BGcolor);
+        newColor = params.BGcolor + vec3(params.decayFactor)*(smearedPixColor - params.BGcolor);
     }
     imageStore(outRender, ivec2(pixel.x,pixel.y), vec4(newColor.x,newColor.y,newColor.z,1.0));
 }

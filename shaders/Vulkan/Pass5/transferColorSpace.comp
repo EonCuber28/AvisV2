@@ -8,11 +8,14 @@ layout(local_size_x = 16, local_size_y = 16) in;
 // or for when we want to convert the rendered frame into RGB for display purposes.
 
 // color space conversion data
-uniform int inColorSpace;
-uniform int outColorSpace;
+layout(push_constant) uniform Params{
+    int inColorSpace;
+    int outColorSpace;
+} params;
 
 // in/out texture
-layout(rgba32f, binding = 0) uniform image2D image;
+layout(rgba32f, binding = 8) uniform readonly image2D image;
+layout(rgba8, binding = 9) uniform image2D outImage;
 
 // color conversion functions written by Claude Sonnet 5.5
 // ------------------------------------------------------------------- helpers
@@ -167,8 +170,8 @@ vec3 getColor(ivec2 pixel){
 }
 void setPx(ivec2 pixel, vec3 color){
     // retain previous pixels w axis
-    vec4 newColor = vec4(color.x,color.y,color.z,imageLoad(image,pixel).w);
-    imageStore(image, pixel, newColor);
+    vec4 newColor = vec4(color.x,color.y,color.z,1.0);
+    imageStore(outImage, pixel, newColor);
 }
 
 void main(){
@@ -178,51 +181,51 @@ void main(){
     // process color
     vec3 outColor = getColor(thisPixel);
     // in is RGB
-    if (inColorSpace == 0){
+    if (params.inColorSpace == 0){
         // out is HSV
-        if (outColorSpace == 1)
+        if (params.outColorSpace == 1)
             outColor = RGBtoHSV(outColor);
         // out is OkLAB
-        else if (outColorSpace == 2)
+        else if (params.outColorSpace == 2)
             outColor = RGBtoOkLAB(outColor);
         // out is CIELAB
-        else if (outColorSpace == 3)
+        else if (params.outColorSpace == 3)
             outColor = RGBtoCIELAB(outColor);
     }
     // in is HSV
-    else if (inColorSpace == 1){
+    else if (params.inColorSpace == 1){
         // out is RGB
-        if (outColorSpace == 0)
+        if (params.outColorSpace == 0)
             outColor = HSVtoRGB(outColor);
         // out is OkLAB
-        else if (outColorSpace == 2)
+        else if (params.outColorSpace == 2)
             outColor = HSVtoOkLAB(outColor);
         // out is CIELAB
-        else if (outColorSpace == 3)
+        else if (params.outColorSpace == 3)
             outColor = HSVtoCIELAB(outColor);
     }
     // in is OkLAB
-    else if (inColorSpace == 2){
+    else if (params.inColorSpace == 2){
         // out is RGB
-        if (outColorSpace == 0)
+        if (params.outColorSpace == 0)
             outColor = OkLABtoRGB(outColor);
         // out is HSV
-        else if (outColorSpace == 1)
+        else if (params.outColorSpace == 1)
             outColor = OkLABtoHSV(outColor);
         // out is CIELAB
-        else if (outColorSpace == 3)
+        else if (params.outColorSpace == 3)
             outColor = OkLABtoCIELAB(outColor);
     }
     // in is CIELAB
-    else if (inColorSpace == 3){
+    else if (params.inColorSpace == 3){
         // out is RGB
-        if (outColorSpace == 0)
+        if (params.outColorSpace == 0)
             outColor = CIELABtoRGB(outColor);
         // out is HSV
-        else if (outColorSpace == 1)
+        else if (params.outColorSpace == 1)
             outColor = CIELABtoHSV(outColor);
         // out is OkLAB
-        else if (outColorSpace == 2)
+        else if (params.outColorSpace == 2)
             outColor = CIELABtoOkLAB(outColor);
     }
     setPx(thisPixel, outColor);

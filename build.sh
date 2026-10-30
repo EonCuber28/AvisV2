@@ -4,12 +4,15 @@
 #   ./build.sh           native build -> dist/avis-linux-<arch>  or  dist/Avis.app
 #   ./build.sh --trace   run Avis on the JVM under the GraalVM tracing agent and save the FFM
 #                        metadata it records into native-image-config/<os>-<arch>/ (commit it)
-#   ./build.sh --clean   delete build/ and dist/ first, then build (combines with --trace)
+#   ./build.sh --pgo     build a profiling copy of Avis and run it; use it for a while, quit it normally, and the
+#                        profile it records is saved into pgo-profiles/<os>-<arch>/ (commit it). Later builds
+#                        optimise with that profile
+#   ./build.sh --clean   delete build/ and dist/ first, then build (combines with --trace and --pgo)
 #   ./build.sh --glsl-check
 #                        only build the shaders with glslangValidator (check shaders/OpenGL, compile
 #                        shaders/Vulkan to SPIR-V), no build
 #
-# Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically),
+# Needs: a JDK 17+ to start Gradle (Oracle GraalVM 25 itself is downloaded automatically),
 #        Linux: gcc + zlib headers, macOS: Xcode command line tools,
 #        and glslangValidator to build the shaders.
 set -euo pipefail
@@ -21,7 +24,7 @@ java_major() {
     "$1" -version 2>&1 | awk -F'"' '/version/ { split($2, v, "."); print (v[1] == "1" ? v[2] : v[1]); exit }'
 }
 
-# Gradle 9 needs Java 17+ to start; the project's own JDK (GraalVM 25) is provisioned by Gradle
+# Gradle 9 needs Java 17+ to start; the project's own JDK (Oracle GraalVM 25) is provisioned by Gradle
 find_gradle_java() {
     local candidates=()
     [[ -n "${JAVA_HOME:-}" ]] && candidates+=("$JAVA_HOME/bin/java")
@@ -80,20 +83,23 @@ check_shader_validator() {
 }
 
 trace=false
+pgo=false
 glsl_check=false
 clean_task=""
 gradle_args=()
 for arg in "$@"; do
     case "$arg" in
         --trace) trace=true ;;
+        --pgo) pgo=true ;;
         --glsl-check) glsl_check=true ;;
         --clean) clean_task="clean" ;;
-        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
         *) gradle_args+=("$arg") ;;   # anything else goes straight to Gradle
     esac
 done
 
-$trace && $glsl_check && die "--trace and --glsl-check can't be used together."
+n=0; for mode in $trace $pgo $glsl_check; do $mode && n=$((n + 1)); done
+(( n <= 1 )) || die "only one of --trace, --pgo and --glsl-check can be used at a time."
 
 find_gradle_java || die "no JDK 17+ found to run Gradle. Install one (any vendor) or point JAVA_HOME at it."
 echo "Using $JAVA_HOME to run Gradle"
@@ -122,6 +128,15 @@ fi
 
 check_native_toolchain
 check_shader_validator
+
+if $pgo; then
+    ./gradlew $clean_task -PpgoInstrument nativeRun ${gradle_args[@]+"${gradle_args[@]}"}
+    ./gradlew pgoCopy ${gradle_args[@]+"${gradle_args[@]}"}
+    echo
+    echo "PGO profile saved under pgo-profiles/. Commit it, then run ./build.sh"
+    exit 0
+fi
+
 ./gradlew $clean_task dist ${gradle_args[@]+"${gradle_args[@]}"}
 
 echo

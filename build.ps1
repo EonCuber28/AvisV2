@@ -4,17 +4,21 @@
 #   .\build.ps1 -Console    same, but keep a console window for log output
 #   .\build.ps1 -Trace      run Avis on the JVM under the GraalVM tracing agent and save the FFM
 #                           metadata it records into native-image-config\<os>-<arch>\ (commit it)
-#   .\build.ps1 -Clean      delete build\ and dist\ first, then build (combines with -Trace)
+#   .\build.ps1 -Pgo        build a profiling copy of Avis and run it; use it for a while, quit it normally, and
+#                           the profile it records is saved into pgo-profiles\<os>-<arch>\ (commit it). Later
+#                           builds optimise with that profile
+#   .\build.ps1 -Clean      delete build\ and dist\ first, then build (combines with -Trace and -Pgo)
 #   .\build.ps1 -GlslCheck  only build the shaders with glslangValidator (check shaders\OpenGL,
 #                           compile shaders\Vulkan to SPIR-V), no build
 #
-# build.sh's --trace, --clean, --console and --glsl-check spellings work too.
+# build.sh's --trace, --pgo, --clean, --console and --glsl-check spellings work too.
 #
-# Needs: a JDK 17+ to start Gradle (GraalVM 25 itself is downloaded automatically) and
+# Needs: a JDK 17+ to start Gradle (Oracle GraalVM 25 itself is downloaded automatically) and
 #        Visual Studio 2022 (or Build Tools) with the "Desktop development with C++" workload,
 #        and glslangValidator (ships with the Vulkan SDK) to build the shaders.
 param(
     [switch]$Trace,
+    [switch]$Pgo,
     [switch]$Console,
     [switch]$Clean,
     [switch]$GlslCheck,
@@ -26,11 +30,12 @@ Set-Location $PSScriptRoot
 # accept build.sh's --flags as well
 switch ($GradleArgs) {
     '--trace' { $Trace = $true }
+    '--pgo' { $Pgo = $true }
     '--clean' { $Clean = $true }
     '--console' { $Console = $true }
     '--glsl-check' { $GlslCheck = $true }
 }
-$GradleArgs = @($GradleArgs | Where-Object { $_ -notin '--trace', '--clean', '--console', '--glsl-check' })
+$GradleArgs = @($GradleArgs | Where-Object { $_ -notin '--trace', '--pgo', '--clean', '--console', '--glsl-check' })
 $cleanTask = if ($Clean) { @('clean') } else { @() }
 
 function Fail($message) {
@@ -38,7 +43,9 @@ function Fail($message) {
     exit 1
 }
 
-if ($Trace -and $GlslCheck) { Fail "-Trace and -GlslCheck can't be used together." }
+if (@($Trace, $Pgo, $GlslCheck | Where-Object { $_ }).Count -gt 1) {
+    Fail 'only one of -Trace, -Pgo and -GlslCheck can be used at a time.'
+}
 
 function Assert-ShaderValidator {
     $hasValidator = (Get-Command glslangValidator.exe -ErrorAction SilentlyContinue) -or
@@ -58,7 +65,7 @@ function Get-JavaMajor($java) {
     return 0
 }
 
-# Gradle 9 needs Java 17+ to start; the project's own JDK (GraalVM 25) is provisioned by Gradle
+# Gradle 9 needs Java 17+ to start; the project's own JDK (Oracle GraalVM 25) is provisioned by Gradle
 function Find-GradleJava {
     $candidates = @()
     if ($env:JAVA_HOME) { $candidates += Join-Path $env:JAVA_HOME 'bin\java.exe' }
@@ -122,6 +129,16 @@ if (-not $vcTools) {
 Assert-ShaderValidator
 
 if ($Console) { $GradleArgs += '-Pconsole' }
+
+if ($Pgo) {
+    & .\gradlew.bat @cleanTask -PpgoInstrument nativeRun @GradleArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & .\gradlew.bat pgoCopy @GradleArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "`nPGO profile saved under pgo-profiles\. Commit it, then run build.bat"
+    exit 0
+}
+
 & .\gradlew.bat @cleanTask dist @GradleArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

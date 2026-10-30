@@ -21,14 +21,16 @@
 layout(local_size_x = 64) in; // work group size of 64
 
 // in data stuffs
-uniform int barInterpolationMethod;
-uniform uint frequencySampleCount;
-uniform uint channelCount;
-uniform uint barCount;
+layout(push_constant) uniform Params{
+    int barInterpolationMethod;
+    uint frequencySampleCount;
+    uint channelCount;
+    uint barCount;
+} params;
 
 // SSBOs
-layout(std430, binding = 1) readonly buffer channelFrequencyData { float amplitude[]; };
-layout(std430, binding = 2) buffer outBars { float barData[]; };
+layout(std430, binding = 3) readonly buffer channelFrequencyData { float amplitude[]; };
+layout(std430, binding = 4) buffer outBars { float barData[]; };
 
 // constants
 const float PI  = 3.14159265358979;
@@ -44,7 +46,7 @@ float cubicSpline(float v0, float v1, float v2, float v3, float t){
     float A = 1-t;
     float B = t;
     // simplified to reduce memory cost
-    return A*v1 + B*v2 + (((A*A*A) - A)-((4*d1 - d2)/15) + ((B*B*B) - B)*((4*d2 - d1)/15)) / 6;
+    return A*v1 + B*v2 + (((A*A*A) - A)*((4*d1 - d2)/15) + ((B*B*B) - B)*((4*d2 - d1)/15)) / 6;
 }
 float catmullRoom(float v0, float v1, float v2, float v3, float t){
     // catmull room tangent calculation
@@ -55,11 +57,11 @@ float catmullRoom(float v0, float v1, float v2, float v3, float t){
     float t2 = t*t;
 
     float h00 = 2*t3 - 3*t2 + 1;
-    float h01 = t3 - 2*t2 - t;
-    float h10 = -2*t3 - 3*t2;
+    float h01 = -2*t3 + 3*t2;
+    float h10 = t3 - 2*t2 + t;
     float h11 = t3 - t2;
 
-    return h00*v0 + h10*m0 + h01*v1 + h11*m1;
+    return h00*v1 + h10*m0 + h01*v2 + h11*m1;
 }
 float monotoneCubic(float v0, float v1, float v2, float v3, float t){
     float s0 = v1-v0;
@@ -69,7 +71,7 @@ float monotoneCubic(float v0, float v1, float v2, float v3, float t){
     float m1;
     float m2;
 
-    if (s0 == 0){
+    if (s1 == 0){
         m1 = 0;
         m2 = 0;
     } else {
@@ -89,8 +91,8 @@ float monotoneCubic(float v0, float v1, float v2, float v3, float t){
     float t2 = t*t;
 
     float h00 = 2*t3 - 3*t2 + 1;
-    float h01 = t3 - 2*t2 - t;
-    float h10 = -2*t3 - 3*t2;
+    float h01 = -2*t3 + 3*t2;
+    float h10 = t3 - 2*t2 + t;
     float h11 = t3 - t2;
 
     return h00*v1 + h10*m1 + h01*v2 + h11*m2;
@@ -109,73 +111,74 @@ float nearestNeighbor(float v0, float v1, float t){
 ivec4 getSoroundingSampleFrequencies(float i){
     // account for OOB
     if (i < 0) i = 0;
-    if (i >= frequencySampleCount) i = frequencySampleCount;
+    if (i >= params.frequencySampleCount) i = params.frequencySampleCount;
     // determine sample indecies
-    ivec4 outVec = ivec4(floor(i - 1), floor(i), ceil(i), ceil(i + 1));
+    ivec4 outVec = ivec4(floor(i)-1, floor(i), floor(i)+1, floor(i)+2);
     // clamp to list boundries
-    return ivec4(clamp(outVec,0,frequencySampleCount-1));
+    return ivec4(clamp(outVec,0,params.frequencySampleCount-1));
 }
 float getTforIndex(float i){
-    if (mod(i,1.0) == 0) return 0.5;
-    return i-ceil(i);
+    if (mod(i,1.0) == 0) return 0;
+    return fract(i);
 }
 float fromBarItoSampleI(uint barI){
-    return (barI/(barCount-1))*(frequencySampleCount-1);
+    return (float(barI)/float(params.barCount-1))*(params.frequencySampleCount-1);
 }
 
 // per-bar code (1 thread per bar per channel)
 void main() {
     uint barIndex = gl_GlobalInvocationID.x;
     uint channelIndex = gl_GlobalInvocationID.y;
-    if (barIndex >= barCount || channelIndex >= channelCount) return; //exit early if OOB
+    if (barIndex >= params.barCount || channelIndex >= params.channelCount) return; //exit early if OOB
+    uint channelOffset = channelIndex*params.frequencySampleCount;
     float sampleI = fromBarItoSampleI(barIndex);
     float t = getTforIndex(sampleI);
     ivec4 soroundingFrequencies = getSoroundingSampleFrequencies(sampleI);
     // calculate data
     // for this channel, get its interpolated frequency amplitude
     float interpolatedChannelFrequency;
-    if (barInterpolationMethod == 1){
+    if (params.barInterpolationMethod == 1){
         // linear
         interpolatedChannelFrequency = linear(
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z], t);
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z], t);
     }
-    else if (barInterpolationMethod == 2){
+    else if (params.barInterpolationMethod == 2){
         // catmull room
         interpolatedChannelFrequency = catmullRoom(
-                amplitude[soroundingFrequencies.x],
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z],
-                amplitude[soroundingFrequencies.w], t);
+                amplitude[channelOffset+soroundingFrequencies.x],
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z],
+                amplitude[channelOffset+soroundingFrequencies.w], t);
     }
-    else if (barInterpolationMethod == 3){
+    else if (params.barInterpolationMethod == 3){
         // monotone cubic
         interpolatedChannelFrequency = monotoneCubic(
-                amplitude[soroundingFrequencies.x],
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z],
-                amplitude[soroundingFrequencies.w], t);
+                amplitude[channelOffset+soroundingFrequencies.x],
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z],
+                amplitude[channelOffset+soroundingFrequencies.w], t);
     }
-    else if (barInterpolationMethod == 4){
+    else if (params.barInterpolationMethod == 4){
         // cosine
         interpolatedChannelFrequency = cosine(
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z], t);
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z], t);
     }
-    else if (barInterpolationMethod == 5){
+    else if (params.barInterpolationMethod == 5){
         // nearest neighbor
         interpolatedChannelFrequency = nearestNeighbor(
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z], t);
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z], t);
     }
     else {
         // cubic spline
         interpolatedChannelFrequency = cubicSpline(
-                amplitude[soroundingFrequencies.x],
-                amplitude[soroundingFrequencies.y],
-                amplitude[soroundingFrequencies.z],
-                amplitude[soroundingFrequencies.w], t);
+                amplitude[channelOffset+soroundingFrequencies.x],
+                amplitude[channelOffset+soroundingFrequencies.y],
+                amplitude[channelOffset+soroundingFrequencies.z],
+                amplitude[channelOffset+soroundingFrequencies.w], t);
     }
     // save data
-    barData[(channelIndex*barCount)+barIndex] = interpolatedChannelFrequency;
+    barData[int((channelIndex*params.barCount)+barIndex)] = interpolatedChannelFrequency;
 }
