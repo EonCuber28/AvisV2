@@ -141,6 +141,7 @@ final class PulseBindings {
     static final MethodHandle pa_stream_peek = fn("pa_stream_peek", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle pa_stream_drop = fn("pa_stream_drop", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     static final MethodHandle pa_stream_readable_size = fn("pa_stream_readable_size", FunctionDescriptor.of(SIZE_T, ADDRESS));
+    static final MethodHandle pa_stream_get_buffer_attr = fn("pa_stream_get_buffer_attr", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
     private static MethodHandle fn(String name, FunctionDescriptor fd){
         return LINKER.downcallHandle(LIB.findOrThrow(name), fd);

@@ -14,8 +14,8 @@ layout(push_constant) uniform Params{
 } params;
 
 // in/out texture
-layout(rgba32f, binding = 8) uniform readonly image2D image;
-layout(rgba8, binding = 9) uniform image2D outImage;
+layout(rgba16f, set = 3, binding = 2) readonly uniform image2D image;
+layout(rgba8, set = 3, binding = 3) writeonly uniform image2D outImage;
 
 // color conversion functions written by Claude Sonnet 5.5
 // ------------------------------------------------------------------- helpers

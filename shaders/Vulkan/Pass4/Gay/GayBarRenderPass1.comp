@@ -29,10 +29,10 @@ layout(push_constant) uniform Params{
 } params;
 
 // Texture setups
-layout(rgba32f, binding = 7) writeonly uniform image2D renderOut; // alpha channel used as bar draw mask
+layout(rgba16f, set = 3, binding = 2) writeonly uniform image2D renderOut; // alpha channel used as bar draw mask
 
 // SSBOs
-layout(std430, binding = 6) buffer inBars { vec4 barData[]; };
+layout(std430, set = 1, binding = 1) buffer inBars { vec4 barData[]; };
 
 void drawPixel(ivec2 pixel, vec4 color){
     imageStore(renderOut, pixel, color);

@@ -25,9 +25,9 @@ layout(push_constant) uniform Params{
 } params;
 
 // SSBOs
-layout(std430, binding = 4) readonly buffer perChannelBarHeight { float barAmplitude[]; };
-layout(std430, binding = 5) readonly buffer channelColors { vec4 channelColor[]; };
-layout(std430, binding = 6) writeonly buffer outBars { vec4 barData[]; };
+layout(std430, set = 0, binding = 3) readonly buffer perChannelBarHeight { float barAmplitude[]; };
+layout(std430, set = 1, binding = 0) readonly buffer channelColors { vec4 channelColor[]; };
+layout(std430, set = 1, binding = 1) writeonly buffer outBars { vec4 barData[]; };
 
 // constants
 const float PI  = 3.14159265358979;
@@ -78,7 +78,7 @@ void main() {
         channelWeightedColor += (channelColor[c]*getBar(barIndex,c))/max(signalSum,1e-6);
     }
     // calculate raw bar color
-    vec3 rawBarColor = vec3((params.midColor*(1-deltaAverage) + channelWeightedColor*deltaAverage).xyz);
+    vec3 rawBarColor = vec3(params.midColor*(1-deltaAverage) + vec3((channelWeightedColor*deltaAverage).xyz)); // TODO: revise this
     // weight by bar volume & convert to RGB
     vec3 outColor;
     if (params.colorSpace == 1){

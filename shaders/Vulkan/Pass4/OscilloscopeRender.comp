@@ -1,0 +1,116 @@
+#version 430
+
+// ins
+layout(push_constant) uniform Params{
+    vec4 waveformColor;
+    vec4 centerlineColor;
+    float waveformWidth;
+    float centerLineWidth;
+    uint channelCount;
+    uint audioSampleCount;
+    uint processingColorSpace;
+} params;
+
+// in SSBOs
+layout(set = 2, binding = 0) uniform sampler2D audioSamples;
+layout(std430, set = 0, binding = 4) writeonly buffer SampleShiftAmount { float sampleShift; };
+layout(rgba16f, set = 3, binding = 4) writeonly uniform image2D renderOut;
+
+float getSample(float I){
+    // I is the sample Index
+    // we don't use textureLOD because that only has 8-it accuracy,
+    // so we interpolate it ourselves.
+    float outSum = 0;
+    if (mod(I,1.0) == 0 || I >= params.audioSampleCount-1) {
+        for (int c = 0; c < params.channelCount; c++){
+            // do 1 sample
+            outSum += texelFetch(audioSamples, ivec2(clamp(int(I),0,params.audioSampleCount-1),c), 0).r;
+        }
+    } else {
+        float weight = mod(I,1.0);
+        for (int c = 0; c < params.channelCount; c++){
+            // do 2 weighted samples
+            outSum += texelFetch(audioSamples, ivec2(int(I),c), 0).r * (1-weight)+
+                      texelFetch(audioSamples, ivec2(int(I)+1,c), 0).r * weight;
+        }
+    }
+    return outSum/params.channelCount;
+}
+
+vec4 luminInterpCIELAB(vec4 CIEALB, float volume){
+    return vec4(CIEALB.x*volume,CIEALB.y,CIEALB.z,CIEALB.w);
+}
+vec4 luminInterpOkLAB(vec4 OkLAB, float volume){
+    return vec4(OkLAB.x*volume,OkLAB.y,OkLAB.z,OkLAB.w);
+}
+vec4 luminInterpRGB(vec4 RGB, float volume){
+    return RGB*volume;
+}
+vec4 luminInterpHSV(vec4 HSV, float volume){
+    return vec4(HSV.x,HSV.y,HSV.z*volume,HSV.w);
+}
+
+void drawPixel(ivec2 pixel, vec4 color, float luminance, ivec2 renderRes){
+    // auto-clamp to image resolution
+    ivec2 newPx = ivec2(clamp(pixel.x,0,renderRes.x), clamp(pixel.y,0,renderRes.y));
+    // auto interp luminance in color space
+    vec4 drawColor;
+    if (luminance == 1){
+        drawColor = color;
+    } else {
+        if (params.processingColorSpace == 1){
+            // HSV
+            drawColor = luminInterpHSV(color, luminance);
+        }
+        else if (params.processingColorSpace == 2){
+            // OkLAB
+            drawColor = luminInterpOkLAB(color, luminance);
+        }
+        else if (params.processingColorSpace == 3){
+            // CIELAB
+            drawColor = luminInterpCIELAB(color, luminance);
+        }
+        else {
+            // RGB
+            drawColor = luminInterpRGB(color, luminance);
+        }
+    }
+    // write pixel
+    imageStore(renderOut, newPx, drawColor);
+}
+void drawSplat(vec4 color, uint xPos, float yPos, float height, ivec2 renderRes){
+    // X/Y position is in pixel positions
+    float highIndex = yPos+(height*0.5);
+    float lowIndex = yPos-(height*0.5);
+    // do we draw a weighted upper-bound pixel?
+    if (mod(highIndex,1) != 0){
+        // draw upper-bound pixel
+        drawPixel(ivec2(xPos,ceil(highIndex)), color, mod(highIndex,1), renderRes);
+    }
+    // do we draw a weithged lowe-bound pixel?
+    if (mod(lowIndex,1) != 0){
+        // draw lower-bound pixel
+        drawPixel(ivec2(xPos,floor(lowIndex)), color, mod(lowIndex,1), renderRes);
+    }
+    // draw whole pixels
+    int wholeLowBound = int(ceil(lowIndex)); // pixel indecies
+    int wholeHighBount = int(floor(highIndex)); // pixel indecies
+    int count = wholeHighBount-wholeLowBound;
+    for (int I = 0; I <= count; I++){
+        // draw full pixels
+        drawPixel(ivec2(xPos,wholeLowBound+I), color, 1, renderRes);
+    }
+}
+
+// this will have 1 thread ran per pixel across the X-render-axis (width)
+void main(){
+    uint xPos = gl_GlobalInvocationID.x;
+    ivec2 size = imageSize(renderOut);
+    if (xPos >= size.x) return;
+    // draw middle line
+    drawSplat(params.centerlineColor, xPos, size.y*0.5, params.centerLineWidth, size);
+    // sample this shifted sample
+    float splatHeight = (getSample((xPos/size.x)*params.audioSampleCount+sampleShift)+1)*size.y; // because samples are from -1 to +1, we shift it to make math easy.
+    // draw spectrogram
+    drawSplat(params.waveformColor, xPos, splatHeight, params.waveformWidth, size);
+}

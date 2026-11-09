@@ -1,11 +1,10 @@
-package com.EonCuber.compute.platforms;
+package com.EonCuber.compute.platforms.OpenGL;
 
 import com.EonCuber.audio.AudioBuffer;
 import com.EonCuber.compute.ComputeDevice;
-import com.EonCuber.config.Settings;
 
-public class Vulkan implements ComputeDevice {
-    // Vulkan ID storage
+public class OpenGL implements ComputeDevice {
+    // OpenGL ID storage
     private long inAudioBuffer;
     private long channelFrequencyData;
     private long frequencyBiasLUT;

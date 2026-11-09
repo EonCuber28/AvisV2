@@ -29,10 +29,10 @@ layout(push_constant) uniform Params{
 } params;
 
 // Texture setups
-layout(rgba32f, binding = 8) writeonly uniform image2D renderOut;
+layout(rgba16f, set = 3, binding = 2) writeonly uniform image2D renderOut;
 
 // SSBOs
-layout(std430, binding = 6) buffer inBars { vec4 barData[]; };
+layout(std430, set = 1, binding = 1) buffer inBars { vec4 barData[]; };
 
 void drawPixel(ivec2 pixel, vec3 color){
     imageStore(renderOut, pixel, vec4(color.x,color.y,color.z,0));

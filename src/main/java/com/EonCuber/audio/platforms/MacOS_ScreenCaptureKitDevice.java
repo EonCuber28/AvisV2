@@ -18,6 +18,10 @@ import static java.lang.foreign.ValueLayout.*;
  * (not tunable, typically longer than the ~3 ms targeted elsewhere). It needs the Screen Recording permission.
  * Since it captures what the system plays regardless of the output device, it follows default-device changes on its
  * own.
+ * <p>
+ * Its ~1024-frame packets alone average ~10.7 ms, so the expected latency is never set and
+ * {@code lowLatencyMode()} stays false. On 14.2+ a {@link MacOS_ProcessTapDevice} that can't tap uses one of these
+ * as a helper that delivers into the tap device instead of itself.
  */
 final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
     static final int SAMPLE_RATE = 48000;
@@ -111,6 +115,8 @@ final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
 
     // ---------------------------------------------------------------- instance
 
+    private final NativeCaptureDevice target; // receives the audio and format changes
+
     // guarded by the platform lock
     private MemorySegment stream = MemorySegment.NULL, output = MemorySegment.NULL, queue = MemorySegment.NULL;
 
@@ -120,9 +126,15 @@ final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
     private final MemorySegment[] planes = new MemorySegment[16];
 
     MacOS_ScreenCaptureKitDevice(Object lock){
+        this(lock, null);
+    }
+
+    /** Delivers into {@code target} ({@code null} = this device); a helper is driven through openNative/closeNative. */
+    MacOS_ScreenCaptureKitDevice(Object lock, NativeCaptureDevice target){
         super(lock, "System audio (ScreenCaptureKit)",
                 new NativeFormat(SAMPLE_RATE, SampleFormat.F32, ByteOrder.nativeOrder(),
                         new Speaker[]{Speaker.FL, Speaker.FR}));
+        this.target = target != null ? target : this;
     }
 
     @Override
@@ -166,7 +178,11 @@ final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
             if (stream.address() == 0) throw new IllegalStateException("SCStream init failed");
             output = (MemorySegment) MSG_P.invokeExact(outputClass, sel("alloc"));
             output = (MemorySegment) MSG_P.invokeExact(output, sel("init"));
-            queue = (MemorySegment) dispatch_queue_create.invokeExact(a.allocateFrom("com.EonCuber.avis.sck"), MemorySegment.NULL);
+            // serial, user-interactive: packets are handled on the performance cores as soon as SCK delivers them,
+            // even under load (at default QoS the handler can land on the efficiency cores)
+            MemorySegment queueAttr = (MemorySegment) dispatch_queue_attr_make_with_qos_class.invokeExact(MemorySegment.NULL,
+                    QOS_CLASS_USER_INTERACTIVE, 0);
+            queue = (MemorySegment) dispatch_queue_create.invokeExact(a.allocateFrom("com.EonCuber.avis.sck"), queueAttr);
             MemorySegment error = a.allocate(ADDRESS);
             for (long type : new long[]{SCStreamOutputTypeAudio, SCStreamOutputTypeScreen}) {
                 byte ok = (byte) MSG_B_PLPP.invokeExact(stream, sel("addStreamOutput:type:sampleHandlerQueue:error:"), output, type, queue, error);
@@ -280,7 +296,7 @@ final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
         SampleFormat sf = asbd.sampleFormat();
         if (sf == null || asbd.channels() <= 0 || asbd.channels() > planes.length) return;
         NativeFormat f = new NativeFormat((int) Math.round(asbd.sampleRate()), sf, asbd.order(), defaultOrder(asbd.channels()));
-        if (!f.sameAs(state().format())) publish(deviceName(), f);
+        if (!f.sameAs(target.state().format())) target.publish(target.deviceName(), f);
 
         int st = (int) Sck.CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer.invokeExact(sampleBuffer, MemorySegment.NULL,
                 ablBuffer, ablBuffer.byteSize(), MemorySegment.NULL, MemorySegment.NULL,
@@ -288,7 +304,7 @@ final class MacOS_ScreenCaptureKitDevice extends NativeCaptureDevice {
         if (st != 0) return;
         MemorySegment blockBuffer = blockBufferOut.get(ADDRESS, 0);
         try {
-            deliverBufferList(this, ablBuffer, asbd.channels(), asbd.nonInterleaved(), sf.bytes, false, planes);
+            deliverBufferList(target, ablBuffer, asbd.channels(), asbd.nonInterleaved(), sf.bytes, false, planes);
         } finally {
             cfRelease(blockBuffer);
         }

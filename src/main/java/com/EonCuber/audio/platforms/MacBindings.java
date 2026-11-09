@@ -33,7 +33,7 @@ final class MacBindings {
     // ---------------------------------------------------------------- CoreAudio constants
     static final int kAudioObjectSystemObject = 1;
     static final int kAudioObjectPropertyElementMain = 0;
-    static final int SCOPE_GLOBAL = fourCC("glob"), SCOPE_OUTPUT = fourCC("outp");
+    static final int SCOPE_GLOBAL = fourCC("glob"), SCOPE_OUTPUT = fourCC("outp"), SCOPE_INPUT = fourCC("inpt");
     static final int kAudioHardwarePropertyDevices = fourCC("dev#");
     static final int kAudioHardwarePropertyDefaultOutputDevice = fourCC("dOut");
     static final int kAudioHardwarePropertyTranslateUIDToDevice = fourCC("uidd");
@@ -46,6 +46,8 @@ final class MacBindings {
     static final int kAudioDevicePropertyDeviceIsAlive = fourCC("livn");
     static final int kAudioDevicePropertyBufferFrameSize = fourCC("fsiz");
     static final int kAudioDevicePropertyBufferFrameSizeRange = fourCC("fsz#");
+    static final int kAudioDevicePropertySafetyOffset = fourCC("saft");
+    static final int kAudioDevicePropertyLatency = fourCC("ltnc");
     static final int kAudioStreamPropertyVirtualFormat = fourCC("sfmt");
     static final int kAudioTapPropertyFormat = fourCC("tfmt");
     static final int kAudioFormatLinearPCM = fourCC("lpcm");
@@ -152,6 +154,10 @@ final class MacBindings {
 
     // ---------------------------------------------------------------- libSystem
     static final MethodHandle dispatch_queue_create = fn(SYSTEM, "dispatch_queue_create", FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
+    /** dispatch_queue_attr_t f(dispatch_queue_attr_t, qos_class_t, int relative_priority) */
+    static final MethodHandle dispatch_queue_attr_make_with_qos_class = fn(SYSTEM, "dispatch_queue_attr_make_with_qos_class",
+            FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT));
+    static final int QOS_CLASS_USER_INTERACTIVE = 0x21;
     static final MethodHandle dispatch_release = fn(SYSTEM, "dispatch_release", FunctionDescriptor.ofVoid(ADDRESS));
     static final MemorySegment NSConcreteGlobalBlock = SYSTEM.findOrThrow("_NSConcreteGlobalBlock");
 

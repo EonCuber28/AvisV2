@@ -70,10 +70,15 @@ abstract class NativeCaptureDevice implements SystemAudioStreamDevice {
             Speaker.TBC, Speaker.TBR
     };
 
+    /** {@link #lowLatencyMode()} budget: the expected average age of a sample when it reaches the buffers. */
+    static final long LOW_LATENCY_BUDGET_NANOS = 4_000_000L;
+    static final long LATENCY_UNKNOWN = Long.MAX_VALUE;
+
     private final Object lifecycleLock;
     private final Object stateLock = new Object();
     private volatile StreamState state;
     private volatile boolean active;
+    private volatile long expectedAverageNanos = LATENCY_UNKNOWN;
 
     // scratch space, only touched by the delivering thread (guarded by deliveryLock for safety across rebinds)
     private final Object deliveryLock = new Object();
@@ -94,12 +99,14 @@ abstract class NativeCaptureDevice implements SystemAudioStreamDevice {
     @Override public int sampleRate(){ return state.format().sampleRate(); }
     @Override public boolean isActive(){ return active; }
     @Override public String deviceName(){ return state.name(); }
+    @Override public boolean lowLatencyMode(){ return active && expectedAverageNanos <= LOW_LATENCY_BUDGET_NANOS; }
 
     @Override
     public final void activate(){
         synchronized (lifecycleLock) {
             if (active) return;
             active = true;
+            expectedAverageNanos = LATENCY_UNKNOWN;
             try {
                 openNative();
             } catch (RuntimeException | Error e) {
@@ -115,6 +122,7 @@ abstract class NativeCaptureDevice implements SystemAudioStreamDevice {
         synchronized (lifecycleLock) {
             if (!active) return;
             active = false;
+            expectedAverageNanos = LATENCY_UNKNOWN;
             try {
                 closeNative();
             } catch (RuntimeException e) {
@@ -133,6 +141,24 @@ abstract class NativeCaptureDevice implements SystemAudioStreamDevice {
     protected final void markInactive(String reason){
         if (active) log("Capture of '" + deviceName() + "' stopped: " + reason, null);
         active = false;
+        expectedAverageNanos = LATENCY_UNKNOWN;
+    }
+
+    /**
+     * Sets the expected average age of a sample when it reaches the buffers, for what the OS actually granted
+     * ({@link #LATENCY_UNKNOWN} when not known). Drives {@link #lowLatencyMode()}.
+     */
+    final void setExpectedAverageLatency(long nanos){
+        expectedAverageNanos = nanos;
+    }
+
+    final long expectedAverageLatency(){
+        return expectedAverageNanos;
+    }
+
+    /** A sample waits half a block on average, then for the delivering thread to wake. */
+    static long blockAverageNanos(double blockFrames, int sampleRate, long wakeOverheadNanos){
+        return (long) (blockFrames * 1_000_000_000.0 / sampleRate / 2) + wakeOverheadNanos;
     }
 
     // ---------------------------------------------------------------- snapshot management
@@ -191,6 +217,11 @@ abstract class NativeCaptureDevice implements SystemAudioStreamDevice {
     /** Capture period target: about 3 ms, as a power of two (128 frames at 44.1/48 kHz, 256 at 96 kHz). */
     static int targetPeriodFrames(int sampleRate){
         return Math.max(32, Integer.highestOneBit(Math.max(1, sampleRate * 3 / 1000)));
+    }
+
+    /** Block size of the standard (not latency-centred) capture modes: about 20 ms. */
+    static int standardPeriodFrames(int sampleRate){
+        return Math.max(32, sampleRate / 50);
     }
 
     // ---------------------------------------------------------------- layout

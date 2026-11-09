@@ -27,10 +27,10 @@
 layout(local_size_x = 64) in; // work group size of 64
 
 // in
-layout(binding = 0) uniform sampler1D frequencyBiases;
-layout(binding = 1) uniform sampler2D audioSamples;
+layout(set = 2, binding = 0) uniform sampler2D audioSamples;
+layout(set = 2, binding = 1) uniform sampler1D frequencyBiases;
 
-layout(push_constant) uniform Params{
+layout(push_constant) uniform Params{ // TODO: change push constants away form push constants, to a active SSBO to reduce GPU I/O
     float biasInfluence;
     float frequencyCyclesPerSample;
     bool useFTiVect;
@@ -39,8 +39,8 @@ layout(push_constant) uniform Params{
 } params;
 
 // SSBO setup
-layout(std430, binding = 2) readonly buffer targetFrequencies { float signal[]; }; // input from program (along with all the other args)
-layout(std430, binding = 3) writeonly buffer channelFrequencyData { float amplitude[]; };
+layout(std430, set = 0, binding = 0) readonly buffer targetFrequencies { float signal[]; }; // input from program (along with all the other args)
+layout(std430, set = 0, binding = 1) writeonly buffer channelFrequencyData { float amplitude[]; };
 // constants
 const float PI  = 3.14159265358979;
 const float TAU = 6.28318530717959; // 2π
@@ -79,6 +79,10 @@ void main(){
         for (int sI = 0; sI < sampleSampleSize; sI++) {
             float signalAmp = getAudioSample(c,sI);
             float exponent = (TAU * frequency * float(sI)) / float(params.audioSampleRate);
+            // I tried to find a way to create a """sum""" of the A and B components of the Ae^iB equasion
+            // to then later run less trig calculations, but sadly thats not possible.
+            // Next best solution would be re-inventing the FFT to conform to the oddities of the QFT
+            // This is the way... I guess.
             realSum += signalAmp*cos(exponent);
             imagSum += -(signalAmp*sin(exponent));
         }

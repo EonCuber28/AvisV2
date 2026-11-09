@@ -30,9 +30,13 @@ val archName = when (System.getProperty("os.arch").lowercase()) {
     "aarch64", "arm64" -> "arm64"
     else -> System.getProperty("os.arch").lowercase()
 }
+// Avis supports Apple silicon (M-series) Macs only. An x64 JDK under Rosetta also reports x86_64 here
+if (osName == "macos" && archName != "arm64") throw GradleException(
+    "Avis supports Apple silicon (M-series) Macs only, but Gradle is running as $archName. " +
+            "On an M-series Mac, start Gradle with an arm64 JDK (not one running under Rosetta).")
 val platform = "$osName-$archName"
 val lwjglNatives = "natives-$osName" + if (archName == "arm64") "-arm64" else ""
-// oldest CPU the binary runs on. x64: AVX2 (Intel Haswell 2013+, AMD Excavator 2015+). Every Apple Silicon Mac has ARMv8.1+
+// oldest CPU the binary runs on. x64: AVX2 (Intel Haswell 2013+, AMD Excavator 2015+). Every M-series Mac has ARMv8.1+
 val cpuBaseline = when {
     archName == "x64" -> "x86-64-v3"
     archName == "arm64" && osName == "macos" -> "armv8.1-a"

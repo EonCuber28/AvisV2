@@ -19,8 +19,13 @@ import static java.lang.foreign.ValueLayout.*;
  * <p>
  * Device 0 is the default sink's monitor and follows default-sink changes live. The rest are the other sinks that
  * aren't suspended. Each stream is opened with the sink's own rate, channel count and channel map as float32, so the
- * server neither resamples nor remixes. The fragment size is about 3 ms (see
- * {@link NativeCaptureDevice#targetPeriodFrames}), so delivery stays well inside one 144 Hz frame.
+ * server neither resamples nor remixes.
+ * <p>
+ * Modes: low latency asks for ~3 ms fragments with {@code PA_STREAM_ADJUST_LATENCY} (see
+ * {@link NativeCaptureDevice#targetPeriodFrames}). If that stream can't be opened, the device falls back to standard
+ * ~20 ms fragments ({@link NativeCaptureDevice#standardPeriodFrames}), set explicitly because pipewire-pulse's default
+ * record fragment is 2 s. The expected latency is seeded from the granted fragment size and then follows how many
+ * frames actually arrive per wake-up, since a server may deliver in bigger chunks than it granted.
  * <p>
  * Threading: all libpulse calls from Java threads happen under the threaded mainloop's lock. Callbacks run on
  * libpulse's mainloop thread, never take {@link #lock}, and never block.
@@ -28,6 +33,9 @@ import static java.lang.foreign.ValueLayout.*;
 public class Unix_PulseAudio implements AudioPlatform {
     private static final String DEFAULT_SINK = "@DEFAULT_SINK@";
     private static final long TAG_SYNC = 1, TAG_FOLLOW_DEFAULT = 2, TAG_FOLLOW_INDEX = 3;
+    // pipewire-pulse's data thread → its main thread → socket → libpulse's (normal priority) mainloop thread
+    private static final long WAKE_OVERHEAD_NANOS = 1_000_000L;
+    private static final long FRAGSIZE_OFFSET = BUFFER_ATTR.byteOffset(MemoryLayout.PathElement.groupElement("fragsize"));
 
     private final Object lock = new Object();
     private final Map<String, PulseMonitorDevice> devices = new LinkedHashMap<>(); // guarded by lock
@@ -188,6 +196,8 @@ public class Unix_PulseAudio implements AudioPlatform {
         int boundIndex = -1;
         int frameBytes = 1;
         int consecutiveFailures; // reset once audio flows
+        boolean lowLatency;      // which buffer attributes createStream asks for
+        double burstFrames;      // running average of frames per read callback, 0 = not measured yet
 
         PulseMonitorDevice(long id, String key, boolean followsDefault, SinkInfo info){
             super(lock, displayName(info, followsDefault), info.format());
@@ -208,8 +218,18 @@ public class Unix_PulseAudio implements AudioPlatform {
                 wanted = true;
                 opening = true;
                 consecutiveFailures = 0;
-                createStream(s, info);
-                s.awaitStreamReady(stream);
+                lowLatency = true;
+                try {
+                    createStream(s, info);
+                    s.awaitStreamReady(stream);
+                } catch (RuntimeException e) {
+                    if (s.dead) throw e;
+                    destroyStream(s);
+                    log("Low-latency capture of '" + deviceName() + "' unavailable, using standard capture: " + e.getMessage(), null);
+                    lowLatency = false;
+                    createStream(s, info);
+                    s.awaitStreamReady(stream);
+                }
             } catch (RuntimeException e) {
                 wanted = false;
                 destroyStream(s);
@@ -268,15 +288,34 @@ public class Unix_PulseAudio implements AudioPlatform {
                 boundSink = info.name();
                 boundIndex = info.index();
                 frameBytes = channels * 4;
+                burstFrames = 0;
 
                 MemorySegment attr = a.allocate(BUFFER_ATTR);
                 attr.fill((byte) 0xFF); // (uint32_t) -1 = server default
-                attr.set(JAVA_INT, BUFFER_ATTR.byteOffset(MemoryLayout.PathElement.groupElement("fragsize")),
-                        targetPeriodFrames(info.rate()) * frameBytes);
+                int fragFrames = lowLatency ? targetPeriodFrames(info.rate()) : standardPeriodFrames(info.rate());
+                attr.set(JAVA_INT, FRAGSIZE_OFFSET, fragFrames * frameBytes);
                 int r = (int) call(pa_stream_connect_record, st, a.allocateFrom(info.monitorName()), attr,
-                        PA_STREAM_ADJUST_LATENCY | PA_STREAM_DONT_MOVE);
+                        lowLatency ? PA_STREAM_ADJUST_LATENCY | PA_STREAM_DONT_MOVE : PA_STREAM_DONT_MOVE);
                 if (r < 0) throw new IllegalStateException("Could not record from '" + info.monitorName() + "': " + s.error());
             }
+        }
+
+        /** Mainloop thread: the stream is ready, seed the expected latency from the fragment size the server granted. */
+        void streamReady(){
+            MemorySegment attr = (MemorySegment) call(pa_stream_get_buffer_attr, stream);
+            if (attr.address() == 0) return;
+            int fragBytes = attr.reinterpret(BUFFER_ATTR.byteSize()).get(JAVA_INT, FRAGSIZE_OFFSET);
+            if (fragBytes > 0 && burstFrames == 0) updateLatency((double) fragBytes / frameBytes);
+        }
+
+        /** Mainloop thread: one read callback delivered {@code frames}. */
+        void noteBurst(long frames){
+            updateLatency(burstFrames == 0 ? frames : burstFrames + (frames - burstFrames) / 16);
+        }
+
+        private void updateLatency(double frames){
+            burstFrames = frames;
+            setExpectedAverageLatency(blockAverageNanos(frames, state().format().sampleRate(), WAKE_OVERHEAD_NANOS));
         }
 
         void destroyStream(Session s){
@@ -284,6 +323,8 @@ public class Unix_PulseAudio implements AudioPlatform {
             if (st.address() == 0) return;
             stream = MemorySegment.NULL;
             boundIndex = -1;
+            burstFrames = 0;
+            setExpectedAverageLatency(LATENCY_UNKNOWN);
             try {
                 call(pa_stream_set_state_callback, st, MemorySegment.NULL, MemorySegment.NULL);
                 call(pa_stream_set_read_callback, st, MemorySegment.NULL, MemorySegment.NULL);
@@ -538,8 +579,13 @@ public class Unix_PulseAudio implements AudioPlatform {
             try {
                 signal();
                 PulseMonitorDevice d = byId.get(userdata.address());
-                if (d == null || d.opening || d.stream.address() != st.address()) return;
+                if (d == null || d.stream.address() != st.address()) return;
                 int state = (int) call(pa_stream_get_state, st);
+                if (state == PA_STREAM_READY) {
+                    d.streamReady();
+                    return;
+                }
+                if (d.opening) return;
                 if (state != PA_STREAM_FAILED && state != PA_STREAM_TERMINATED) return;
                 d.destroyStream(this);
                 if (d.followsDefault && d.wanted && !dead && ++d.consecutiveFailures <= 5) {
@@ -558,6 +604,7 @@ public class Unix_PulseAudio implements AudioPlatform {
         void onStreamRead(MemorySegment st, long nbytes, MemorySegment userdata){
             try {
                 PulseMonitorDevice d = byId.get(userdata.address());
+                long burst = 0;
                 while (true) {
                     long readable = (long) pa_stream_readable_size.invokeExact(st);
                     if (readable <= 0) break; // 0, or (size_t) -1 on error
@@ -570,9 +617,11 @@ public class Unix_PulseAudio implements AudioPlatform {
                         int fb = d.frameBytes;
                         if (data.address() == 0) d.deliverSilence(size / fb); // hole in the stream
                         else d.deliverInterleaved(data.reinterpret(size), (int) (size / fb));
+                        burst += size / fb;
                     }
                     int ignored = (int) pa_stream_drop.invokeExact(st);
                 }
+                if (burst > 0) d.noteBurst(burst);
             } catch (Throwable t) {
                 log("pulse read callback failed", t);
             }

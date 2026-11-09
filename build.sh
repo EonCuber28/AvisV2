@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the standalone Avis executable for this machine (Linux or macOS) into dist/.
+# Builds the standalone Avis executable for this machine (Linux, or macOS on Apple silicon) into dist/.
 #
 #   ./build.sh           native build -> dist/avis-linux-<arch>  or  dist/Avis.app
 #   ./build.sh --trace   run Avis on the JVM under the GraalVM tracing agent and save the FFM

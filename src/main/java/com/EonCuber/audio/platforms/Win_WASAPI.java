@@ -28,7 +28,7 @@ import static java.lang.foreign.ValueLayout.*;
  * period, which pulls the engine (and so the loopback packets) down to about 3 ms where the driver supports it. It
  * also keeps loopback flowing while the system is silent. Fallbacks, in order: IAudioClient3 companion, then a plain
  * IAudioClient companion at the default period, then loopback alone, polled every 1 ms with synthesized silence
- * while idle.
+ * while idle. {@code lowLatencyMode()} follows from the period that actually drives delivery.
  * <p>
  * Threading: all COM work happens on platform-owned MTA threads: one control thread (enumeration and
  * notifications) plus one capture thread per active device. Caller threads never touch COM.
@@ -36,6 +36,8 @@ import static java.lang.foreign.ValueLayout.*;
 public class Win_WASAPI implements AudioPlatform {
     private static final String DEFAULT_KEY = "<default>";
     private static final long REFTIMES_PER_SEC = 10_000_000L;
+    // wake-up overhead per capture model: MAX_PRIORITY thread woken by the companion's event, or the 1 ms poll
+    private static final long EVENT_WAKE_NANOS = 500_000L, POLL_WAKE_NANOS = 1_500_000L;
 
     private final Object lock = new Object();
     private final Map<String, WasapiDevice> devices = new ConcurrentHashMap<>();
@@ -597,7 +599,7 @@ public class Win_WASAPI implements AudioPlatform {
             MemorySegment renderFormat = MemorySegment.NULL, renderEvent = MemorySegment.NULL;
             boolean companion, timerRaised;
             int rate, blockAlign, renderBufferFrames;
-            long periodNanos;
+            long periodNanos, defaultPeriodNanos;
             long lastAudioNanos;
 
             Capture(Arena a){
@@ -651,6 +653,7 @@ public class Win_WASAPI implements AudioPlatform {
                 periodNanos = 10_000_000L;
                 if ((int) V_PPP.invokeExact(fn(loopClient, AC_GetDevicePeriod), loopClient, pRefA, pRefB) >= 0)
                     periodNanos = pRefA.get(JAVA_LONG, 0) * 100L;
+                defaultPeriodNanos = periodNanos;
 
                 openCompanion();
 
@@ -662,8 +665,13 @@ public class Win_WASAPI implements AudioPlatform {
                         closeCompanion();
                     }
                 }
-                if (!companion) raiseTimerResolution();
+                if (!companion) {
+                    // a low-latency companion that failed after initializing no longer drives the engine
+                    periodNanos = defaultPeriodNanos;
+                    raiseTimerResolution();
+                }
                 lastAudioNanos = System.nanoTime();
+                setExpectedAverageLatency(periodNanos / 2 + (companion ? EVENT_WAKE_NANOS : POLL_WAKE_NANOS));
             }
 
             /** Silent low-latency render stream on the same endpoint (see class docs). */
@@ -829,6 +837,7 @@ public class Win_WASAPI implements AudioPlatform {
             }
 
             void close(){
+                setExpectedAverageLatency(LATENCY_UNKNOWN);
                 closeCompanion();
                 if (loopClient.address() != 0) {
                     try {

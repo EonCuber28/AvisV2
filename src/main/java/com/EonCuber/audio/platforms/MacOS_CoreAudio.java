@@ -19,12 +19,12 @@ import static com.EonCuber.audio.platforms.MacBindings.*;
 import static com.EonCuber.audio.platforms.NativeCaptureDevice.log;
 
 /**
- * System audio capture on macOS.
+ * System audio capture on macOS. Avis supports Apple silicon (M-series) Macs only, and the app bundle needs 13.0+.
  * <ul>
  *   <li><b>14.2+</b>: Core Audio process taps ({@link MacOS_ProcessTapDevice}). Device 0 is the default output and
  *   follows default-output changes live; the rest are the other output devices that are running. 1:1 capture of
- *   each device's stream 0 with a ~3 ms IO buffer. Needs the "System Audio Recording" permission; without it the tap
- *   delivers silence.</li>
+ *   each device's stream 0: a low-latency tap first, then a standard tap, then (default device only)
+ *   ScreenCaptureKit. Needs the "System Audio Recording" permission; without it the tap delivers silence.</li>
  *   <li><b>13.0–14.1</b>: one ScreenCaptureKit device ({@link MacOS_ScreenCaptureKitDevice}) with the stereo system
  *   mix. Needs the Screen Recording permission.</li>
  *   <li><b>older</b>: no devices.</li>

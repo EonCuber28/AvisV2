@@ -1,4 +1,4 @@
-package com.EonCuber.compute.platforms;
+package com.EonCuber.compute.platforms.OpenGL;
 
 import com.EonCuber.audio.AudioBuffer;
 import com.EonCuber.compute.ComputeDevice;

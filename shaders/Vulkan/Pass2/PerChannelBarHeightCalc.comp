@@ -29,8 +29,8 @@ layout(push_constant) uniform Params{
 } params;
 
 // SSBOs
-layout(std430, binding = 3) readonly buffer channelFrequencyData { float amplitude[]; };
-layout(std430, binding = 4) buffer outBars { float barData[]; };
+layout(std430, set = 0, binding = 1) readonly buffer channelFrequencyData { float amplitude[]; };
+layout(std430, set = 1, binding = 1) writeonly buffer outBars { float barData[]; };
 
 // constants
 const float PI  = 3.14159265358979;
